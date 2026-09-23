@@ -112,7 +112,7 @@ export async function importAcademicData(payload: {
   assignments: Omit<TeacherAssignment, "id" | "organizationId">[];
   schedules?: Omit<ScheduleEntry, "id" | "organizationId">[];
 }) {
-  const cleanAssignments = cleanPayload.assignments.filter(
+  const cleanAssignments = payload.assignments.filter(
     (item) =>
       item.classCode &&
       item.className &&
