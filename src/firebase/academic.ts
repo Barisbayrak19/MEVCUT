@@ -136,7 +136,29 @@ export async function importAcademicData(payload: {
     { teacherUid: string; classCode: string; subjectCodes: Set<string> }
   >();
 
+  const existingSnapshot = await getDocs(
+    query(
+      collection(db, "teacherAssignments"),
+      where("organizationId", "==", payload.organizationId)
+    )
+  );
+
+  const touchedClasses = new Set(
+    payload.assignments.map((item) => item.classCode)
+  );
+
   const batch = writeBatch(db);
+
+  for (const existing of existingSnapshot.docs) {
+    const data = existing.data();
+
+    if (
+      touchedClasses.has(String(data.classCode || "")) &&
+      data.source !== "manual"
+    ) {
+      batch.delete(existing.ref);
+    }
+  }
 
   for (const item of payload.assignments) {
     const teacherUid =
