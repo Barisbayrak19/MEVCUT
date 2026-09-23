@@ -358,7 +358,7 @@ async function extractStudents() {
 }
 
 function extractAcademic() {
-  if (!/\\/IlkOgretim\\/OKL\\/IOK09004\\.aspx/i.test(location.pathname)) {
+  if (!/\/IlkOgretim\/OKL\/IOK09004\.aspx/i.test(location.pathname)) {
     throw new Error("IOK09004 Ders Öğretmenleri sayfası açık değil.");
   }
 
@@ -382,13 +382,13 @@ function extractAcademic() {
     for (const option of [...subjectSelect.options]) {
       const code = String(option.value || "").trim();
       const label = String(option.textContent || "")
-        .replace(/\\s+/g, " ")
+        .replace(/\s+/g, " ")
         .trim();
 
       if (!code || code === "-1" || !label) continue;
 
       const normalized = label
-        .replace(/\\s*\\(\\d+\\s*Saat\\)\\s*$/i, "")
+        .replace(/\s*\(\d+\s*Saat\)\s*$/i, "")
         .trim()
         .toLocaleLowerCase("tr-TR");
 
@@ -402,7 +402,7 @@ function extractAcademic() {
     const cells = [...row.querySelectorAll(":scope > td")]
       .map((cell) =>
         String(cell.textContent || "")
-          .replace(/\\s+/g, " ")
+          .replace(/\s+/g, " ")
           .trim()
       );
 
@@ -425,7 +425,7 @@ function extractAcademic() {
     assignments.push({
       classCode: String(selectedClass.value),
       className: String(selectedClass.textContent || "")
-        .replace(/\\s+/g, " ")
+        .replace(/\s+/g, " ")
         .trim(),
       subjectCode,
       subjectName,
