@@ -1332,6 +1332,47 @@ function EOkulTransferView() {
       }
     }
 
+    const academicEncoded =
+      new URLSearchParams(window.location.search)
+        .get("eokulAcademic");
+
+    if (academicEncoded) {
+      try {
+        const binary = atob(academicEncoded);
+        const bytes = Uint8Array.from(
+          binary,
+          (char) => char.charCodeAt(0)
+        );
+        const decoded = new TextDecoder().decode(bytes);
+        const payload =
+          JSON.parse(decoded) as ImportPayload;
+
+        void processPayload(payload);
+
+        const url = new URL(
+          window.location.href
+        );
+        url.searchParams.delete(
+          "eokulAcademic"
+        );
+        url.searchParams.delete(
+          "eokulImport"
+        );
+        window.history.replaceState(
+          {},
+          "",
+          url.toString()
+        );
+      } catch {
+        setStatus(
+          "Akademik aktarım verisi okunamadı."
+        );
+        setError(
+          "e-Okul'dan gelen ders-öğretmen verisi çözülemedi."
+        );
+      }
+    }
+
     const handler = (event: Event) => {
       const payload =
         (
