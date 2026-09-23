@@ -33,6 +33,7 @@ const attendanceLabels: Record<AttendanceStatus, string> = {
   full_day: "Tam Gün",
   half_day: "Yarım Gün",
   late: "Geç",
+  unknown: "Bilinmiyor",
 };
 
 const lessonStatusLabels: Record<LessonAttendanceRecord["status"], string> = {
