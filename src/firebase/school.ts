@@ -6,6 +6,7 @@ import {
   serverTimestamp,
   setDoc,
   where,
+  writeBatch,
   query,
 } from "firebase/firestore";
 import { db } from "./config";
@@ -51,7 +52,7 @@ export async function importEOkulData(payload: EOkulImportPayload) {
   const now = serverTimestamp();
 
   for (const items of chunk(payload.classes, 450)) {
-    const batch = (await import("firebase/firestore")).writeBatch(db);
+    const batch = writeBatch(db);
     for (const item of items) {
       const id = item.code;
       batch.set(doc(collection(db, "classes"), id), {
