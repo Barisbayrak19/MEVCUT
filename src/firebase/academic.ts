@@ -41,6 +41,7 @@ export async function getTeacherAssignments(
         subjectCode: String(data.subjectCode || ""),
         subjectName: String(data.subjectName || ""),
         teacherName: String(data.teacherName || ""),
+        teacherUid: data.teacherUid ? String(data.teacherUid) : undefined,
         source: data.source === "manual" ? "manual" : "e-okul",
       } satisfies TeacherAssignment;
     })
@@ -96,9 +97,43 @@ export async function importAcademicData(payload: {
   assignments: Omit<TeacherAssignment, "id" | "organizationId">[];
   schedules?: Omit<ScheduleEntry, "id" | "organizationId">[];
 }) {
+  const usersSnapshot = await getDocs(collection(db, "users"));
+  const teachers = usersSnapshot.docs
+    .map((item) => ({
+      uid: item.id,
+      displayName: String(item.data().displayName || ""),
+      role: String(item.data().role || ""),
+      active: item.data().active === true,
+      organizationId: String(item.data().organizationId || ""),
+    }))
+    .filter(
+      (item) =>
+        item.organizationId === payload.organizationId &&
+        item.role === "teacher" &&
+        item.active
+    );
+
+  const normalizeName = (value: string) =>
+    value.trim().toLocaleLowerCase("tr-TR").replace(/\\s+/g, " ");
+
+  const resolveTeacherUid = (teacherName: string) =>
+    teachers.find(
+      (teacher) =>
+        normalizeName(teacher.displayName) ===
+        normalizeName(teacherName)
+    )?.uid;
+
+  const accessMap = new Map<
+    string,
+    { teacherUid: string; classCode: string; subjectCodes: Set<string> }
+  >();
+
   const batch = writeBatch(db);
 
   for (const item of payload.assignments) {
+    const teacherUid =
+      item.teacherUid || resolveTeacherUid(item.teacherName);
+
     const id = safeId(
       payload.organizationId +
       "_" +
@@ -114,6 +149,38 @@ export async function importAcademicData(payload: {
       {
         organizationId: payload.organizationId,
         ...item,
+        ...(teacherUid ? { teacherUid } : {}),
+        importedAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
+
+    if (teacherUid) {
+      const key = teacherUid + "__" + item.classCode;
+      const entry =
+        accessMap.get(key) || {
+          teacherUid,
+          classCode: item.classCode,
+          subjectCodes: new Set<string>(),
+        };
+      entry.subjectCodes.add(item.subjectCode);
+      accessMap.set(key, entry);
+    }
+  }
+
+  for (const access of accessMap.values()) {
+    batch.set(
+      doc(
+        db,
+        "teacherAssignmentAccess",
+        access.teacherUid + "__" + access.classCode
+      ),
+      {
+        organizationId: payload.organizationId,
+        teacherUid: access.teacherUid,
+        classCode: access.classCode,
+        subjectCodes: [...access.subjectCodes],
+        active: true,
         importedAt: serverTimestamp(),
       },
       { merge: true }
@@ -149,5 +216,6 @@ export async function importAcademicData(payload: {
   return {
     assignments: payload.assignments.length,
     schedules: payload.schedules?.length || 0,
+    linkedTeachers: [...accessMap.values()].length,
   };
 }
