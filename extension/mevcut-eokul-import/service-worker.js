@@ -1,33 +1,81 @@
-async function findEOkulTab(requiredPage) {
+async function findEOkulTab(requiredPage, openIfMissing = true) {
   const tabs = await chrome.tabs.query({
-    url: ["https://e-okul.meb.gov.tr/IlkOgretim/OKL/*"],
+    url: ["https://e-okul.meb.gov.tr/*"],
   });
 
   const matches = tabs.filter((tab) => {
     const url = tab.url || "";
+
+    if (!/https:\/\/e-okul\.meb\.gov\.tr\//i.test(url)) {
+      return false;
+    }
+
     if (requiredPage === "attendance") {
-      return /\/IOK08001\.aspx/i.test(url);
+      return /\/IlkOgretim\/OKL\/IOK08001\.aspx/i.test(url);
     }
 
     if (requiredPage === "academic") {
-      return /\/IOK09004\.aspx/i.test(url);
+      return /\/IlkOgretim\/OKL\/IOK09004\.aspx/i.test(url);
     }
 
-    return true;
+    return /\/IlkOgretim\/OKL\//i.test(url);
   });
 
-  if (!matches.length) {
+  if (matches.length) {
+    return matches.find((tab) => tab.active) || matches[0];
+  }
+
+  if (!openIfMissing) {
     throw new Error(
       requiredPage === "attendance"
-        ? "e-Okul Öğrenci Günlük Devamsızlık Girişi sekmesi bulunamadı."
+        ? "IOK08001 e-Okul sekmesi bulunamadı."
         : requiredPage === "academic"
-          ? "e-Okul Ders Öğretmenleri (IOK09004) sekmesi bulunamadı."
+          ? "IOK09004 e-Okul sekmesi bulunamadı."
           : "e-Okul sekmesi bulunamadı."
     );
   }
 
-  const active = matches.find((tab) => tab.active);
-  return active || matches[0];
+  const url =
+    requiredPage === "academic"
+      ? "https://e-okul.meb.gov.tr/IlkOgretim/OKL/IOK09004.aspx"
+      : "https://e-okul.meb.gov.tr/IlkOgretim/OKL/IOK08001.aspx";
+
+  const tab = await chrome.tabs.create({
+    url,
+    active: true,
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+
+  const refreshed = await chrome.tabs.get(tab.id);
+
+  if (!refreshed?.id) {
+    throw new Error("e-Okul sekmesi açılamadı.");
+  }
+
+  return refreshed;
+}
+
+async function getBridgeStatus() {
+  const tabs = await chrome.tabs.query({
+    url: ["https://e-okul.meb.gov.tr/*"],
+  });
+
+  return {
+    extensionVersion: chrome.runtime.getManifest().version,
+    eOkulTabs: tabs.map((tab) => ({
+      id: tab.id,
+      active: Boolean(tab.active),
+      title: String(tab.title || ""),
+      url: String(tab.url || ""),
+    })),
+    attendanceTabs: tabs.filter((tab) =>
+      /\/IlkOgretim\/OKL\/IOK08001\.aspx/i.test(tab.url || "")
+    ).length,
+    academicTabs: tabs.filter((tab) =>
+      /\/IlkOgretim\/OKL\/IOK09004\.aspx/i.test(tab.url || "")
+    ).length,
+  };
 }
 
 async function runMain(tabId, func, args = []) {
@@ -407,6 +455,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     try {
       if (!sender.tab?.id) {
         throw new Error("MEVCUT sekmesi bulunamadı.");
+      }
+
+      if (message.action === "CHECK_STATUS") {
+        const status = await getBridgeStatus();
+        sendResponse({
+          ok: true,
+          payload: status,
+        });
+        return;
       }
 
       if (
