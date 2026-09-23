@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "MEVCUT e-Okul Bridge",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "MEVCUT Entegrasyon Merkezi ile e-Okul arasında arka plan köprüsü.",
   "permissions": [
     "tabs",
