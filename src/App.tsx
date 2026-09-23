@@ -15,7 +15,7 @@ type ImportPayload = EOkulImportPayload & {
 };
 
 function EOkulTransferView() {
-  const { profile, loading: authLoading } = useAuth();
+  const { profile, loading: authLoading, profileError } = useAuth();
   const [status, setStatus] = useState("Chrome eklentisi bekleniyor.");
   const [summary, setSummary] = useState<{ classes: number; students: number } | null>(null);
   const [error, setError] = useState("");
@@ -27,8 +27,8 @@ function EOkulTransferView() {
 
     const processPayload = async (payload: ImportPayload) => {
       if (!profile) {
-        setStatus("Kullanıcı profili bekleniyor.");
-        setError("MEVCUT kullanıcı profili yüklenemedi. Lütfen sayfayı yenileyip tekrar deneyin.");
+        setStatus("Kullanıcı profili kullanılamıyor.");
+        setError(profileError || "MEVCUT kullanıcı profili yüklenemedi. Lütfen sayfayı yenileyip tekrar deneyin.");
         return;
       }
       if (!payload?.classes?.length && !payload?.students?.length) return;
@@ -82,7 +82,7 @@ function EOkulTransferView() {
       cancelled = true;
       window.removeEventListener("mevcut-eokul-import", handler);
     };
-  }, [authLoading, profile?.organizationId]);
+  }, [authLoading, profile?.organizationId, profileError]);
 
   return (
     <section className="panel">
