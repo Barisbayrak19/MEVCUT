@@ -7,6 +7,7 @@ export interface TeacherAssignment {
   subjectName: string;
   teacherName: string;
   teacherUid?: string;
+  teacherTcNo?: string;
   source: "e-okul" | "manual";
   importedAt?: string;
 }
