@@ -18,7 +18,7 @@ const chunk = <T,>(items: T[], size: number) => {
   return result;
 };
 
-export type AttendanceStatus = "present" | "full_day" | "half_day" | "late";
+export type AttendanceStatus = "present" | "full_day" | "half_day" | "late" | "unknown";
 
 export interface SchoolClass {
   code: string;
