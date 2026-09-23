@@ -47,6 +47,28 @@ service cloud.firestore {
            currentUser().data.organizationId;
     }
 
+    function teacherHasSubjectAccess(data) {
+      return isTeacher()
+        && exists(
+          /databases/$(database)/documents/teacherAssignmentAccess/$(request.auth.uid + "__" + data.classCode)
+        )
+        && get(
+          /databases/$(database)/documents/teacherAssignmentAccess/$(request.auth.uid + "__" + data.classCode)
+        ).data.organizationId ==
+           currentUser().data.organizationId
+        && get(
+          /databases/$(database)/documents/teacherAssignmentAccess/$(request.auth.uid + "__" + data.classCode)
+        ).data.active == true
+        && get(
+          /databases/$(database)/documents/teacherAssignmentAccess/$(request.auth.uid + "__" + data.classCode)
+        ).data.subjectCodes.hasAny([data.subjectCode]);
+    }
+
+    function teacherOwnAttendance(data) {
+      return teacherHasSubjectAccess(data)
+        && data.teacherUid == request.auth.uid;
+    }
+
     function isParentOfStudent(studentId) {
       return isParent()
         && exists(
@@ -128,22 +150,46 @@ service cloud.firestore {
           && resource.data.parentUid == request.auth.uid
         );
 
-      allow create, update, delete:
+      allow create, update:
         if adminSameOrg(
           request.resource.data
         );
+
+      allow delete:
+        if adminSameOrg(resource.data);
     }
 
 
     match /teacherAssignments/{assignmentId} {
       allow read:
-        if sameOrg(resource.data);
+        if adminSameOrg(resource.data)
+        || (
+          isTeacher()
+          && resource.data.organizationId == currentUser().data.organizationId
+          && resource.data.teacherName == currentUser().data.displayName
+        );
 
       allow create, update:
         if adminSameOrg(request.resource.data);
 
       allow delete:
         if adminSameOrg(resource.data);
+    }
+
+
+    match /teacherAssignmentAccess/{accessId} {
+      allow read:
+        if adminSameOrg(resource.data)
+        || (
+          isTeacher()
+          && resource.data.organizationId == currentUser().data.organizationId
+          && resource.data.teacherUid == request.auth.uid
+        );
+
+      allow create, update, delete:
+        if adminSameOrg(
+          request.resource.data
+        );
     }
 
 
@@ -160,19 +206,56 @@ service cloud.firestore {
 
 
     match /attendance/{attendanceId} {
-      allow get, list:
-        if sameOrg(resource.data);
-
-      allow create:
-        if sameOrg(request.resource.data)
-        && request.resource.data.reviewStatus != "approved";
-
-      allow update:
-        if (
-          adminSameOrg(request.resource.data)
+      allow get:
+        if adminSameOrg(resource.data)
+        || (
+          teacherOwnAttendance(resource.data)
         )
         || (
-          sameOrg(request.resource.data)
+          isTeacher()
+          && resource.data.organizationId == currentUser().data.organizationId
+          && resource.data.teacherUid == request.auth.uid
+          && resource.data.subjectCode == "legacy"
+        );
+
+      allow list:
+        if adminSameOrg(resource.data)
+        || (
+          teacherOwnAttendance(resource.data)
+        )
+        || (
+          isTeacher()
+          && resource.data.organizationId == currentUser().data.organizationId
+          && resource.data.teacherUid == request.auth.uid
+          && resource.data.subjectCode == "legacy"
+        );
+
+      allow create:
+        if adminSameOrg(request.resource.data)
+        || (
+          teacherOwnAttendance(request.resource.data)
+          && request.resource.data.reviewStatus != "approved"
+        )
+        || (
+          isTeacher()
+          && request.resource.data.organizationId == currentUser().data.organizationId
+          && request.resource.data.teacherUid == request.auth.uid
+          && request.resource.data.subjectCode == "legacy"
+          && request.resource.data.reviewStatus != "approved"
+        );
+
+      allow update:
+        if adminSameOrg(request.resource.data)
+        || (
+          teacherOwnAttendance(request.resource.data)
+          && resource.data.reviewStatus != "approved"
+          && request.resource.data.reviewStatus != "approved"
+        )
+        || (
+          isTeacher()
+          && request.resource.data.organizationId == currentUser().data.organizationId
+          && request.resource.data.teacherUid == request.auth.uid
+          && request.resource.data.subjectCode == "legacy"
           && resource.data.reviewStatus != "approved"
           && request.resource.data.reviewStatus != "approved"
         );
@@ -184,10 +267,20 @@ service cloud.firestore {
 
     match /attendanceLogs/{logId} {
       allow read:
-        if sameOrg(resource.data);
+        if adminSameOrg(resource.data)
+        || (
+          isTeacher()
+          && resource.data.organizationId == currentUser().data.organizationId
+          && resource.data.changedBy == request.auth.uid
+        );
 
       allow create:
-        if sameOrg(request.resource.data);
+        if adminSameOrg(request.resource.data)
+        || (
+          isTeacher()
+          && request.resource.data.organizationId == currentUser().data.organizationId
+          && request.resource.data.changedBy == request.auth.uid
+        );
 
       allow update, delete:
         if adminSameOrg(resource.data);
