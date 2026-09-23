@@ -1456,9 +1456,10 @@ function IntegrationCenterView() {
 
           setStatus(
             result.assignments +
-              " ders-öğretmen eşleşmesi ve " +
-              result.schedules +
-              " program kaydı aktarıldı."
+              " ders-öğretmen eşleşmesi" +
+              " (" +
+              (detail.payload.classes?.length || 0) +
+              " sınıf/şube) aktarıldı."
           );
           setError("");
         }
@@ -1683,7 +1684,7 @@ function IntegrationCenterView() {
         <article className="integration-card">
           <strong>Ders + Öğretmen Senkronizasyonu</strong>
           <p>
-            IOK09004 ekranında seçili sınıfın ders-öğretmen eşleşmesini alır.
+            IOK09004 ekranındaki tüm sınıf/şube seçimlerini sırayla açar ve ders-öğretmen bilgilerini toplar.
           </p>
           <button
             className="secondary"
