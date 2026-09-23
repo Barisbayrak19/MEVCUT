@@ -1446,7 +1446,24 @@ function IntegrationCenterView() {
     );
     window.addEventListener("MEVCUT_EOKUL_RESULT", handler);
 
+    const pingBridge = () => {
+      window.postMessage(
+        {
+          source: "MEVCUT",
+          type: "MEVCUT_EOKUL_BRIDGE_PING",
+        },
+        window.location.origin
+      );
+    };
+
+    pingBridge();
+    const bridgeTimer = window.setInterval(
+      pingBridge,
+      1000
+    );
+
     return () => {
+      window.clearInterval(bridgeTimer);
       window.removeEventListener(
         "MEVCUT_EOKUL_EXTENSION_READY",
         extensionReadyHandler
