@@ -4,7 +4,6 @@ import {
   getDocs,
   query,
   serverTimestamp,
-  setDoc,
   where,
   writeBatch,
 } from "firebase/firestore";
@@ -14,6 +13,7 @@ import type {
   AttendanceReviewStatus,
   LessonAttendance,
   LessonAttendanceRecord,
+  AttendanceRuleViolation,
 } from "../types/academic";
 
 export type LessonStatus = LessonAttendanceRecord["status"];
@@ -46,13 +46,16 @@ export function lessonAttendanceId(
 
 export async function getLessonAttendances(
   organizationId: string,
-  date?: string
+  date?: string,
+  teacherUid?: string
 ): Promise<LessonAttendance[]> {
+  const constraints = [
+    where("organizationId", "==", organizationId),
+    ...(teacherUid ? [where("teacherUid", "==", teacherUid)] : []),
+  ];
+
   const snapshot = await getDocs(
-    query(
-      collection(db, "attendance"),
-      where("organizationId", "==", organizationId)
-    )
+    query(collection(db, "attendance"), ...constraints)
   );
 
   return snapshot.docs
@@ -75,6 +78,9 @@ export async function getLessonAttendances(
         reviewStatus: (data.reviewStatus || "submitted") as AttendanceReviewStatus,
         updatedBy: String(data.updatedBy || ""),
         updatedAt: data.updatedAt,
+        ruleViolations: Array.isArray(data.ruleViolations)
+          ? data.ruleViolations as AttendanceRuleViolation[]
+          : [],
       } satisfies LessonAttendance;
     })
     .filter((item) => !date || item.date === date)
@@ -97,6 +103,7 @@ export async function saveLessonAttendance(args: {
   teacherName: string;
   period: number;
   records: LessonAttendanceRecord[];
+  ruleViolations?: AttendanceRuleViolation[];
 }) {
   const id = lessonAttendanceId(
     args.organizationId,
@@ -133,6 +140,7 @@ export async function saveLessonAttendance(args: {
       lessonKey: id,
       records: args.records,
       reviewStatus: "submitted",
+      ruleViolations: args.ruleViolations || [],
       updatedBy: args.teacherUid,
       updatedAt: serverTimestamp(),
       ...(existing ? {} : { createdAt: serverTimestamp() }),
@@ -225,6 +233,31 @@ export async function reviewLessonAttendance(
       reviewedAt: serverTimestamp(),
     }
   );
+
+  if (status === "needs_review") {
+    batch.set(
+      doc(
+        db,
+        "attendanceLogs",
+        safeId(attendanceId + "__needs_review__" + Date.now())
+      ),
+      {
+        organizationId,
+        attendanceId,
+        date: item.date,
+        classCode: item.classCode,
+        className: item.className,
+        subjectName: item.subjectName,
+        teacherName: item.teacherName,
+        studentNo: "",
+        previousStatus: item.reviewStatus,
+        newStatus: "needs_review",
+        changedBy: reviewerUid,
+        changedAt: serverTimestamp(),
+        action: "needs_review",
+      } satisfies Omit<AttendanceAuditLog, "id">
+    );
+  }
 
   if (status === "approved") {
     batch.set(
