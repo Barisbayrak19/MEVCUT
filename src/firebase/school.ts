@@ -186,9 +186,8 @@ export async function saveAttendance(
       period: 0,
       lessonKey: attendanceDocId(
         organizationId,
-        date,
         classCode,
-        "legacy"
+        date
       ),
       teacherUid: updatedBy,
       teacherName: "",
