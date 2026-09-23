@@ -78,6 +78,107 @@ async function getBridgeStatus() {
   };
 }
 
+async function waitForTabComplete(tabId, timeoutMs = 20000) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      chrome.tabs.onUpdated.removeListener(listener);
+      reject(new Error("e-Okul sayfasının yüklenmesi zaman aşımına uğradı."));
+    }, timeoutMs);
+
+    const listener = (updatedTabId, changeInfo, tab) => {
+      if (updatedTabId !== tabId || changeInfo.status !== "complete") {
+        return;
+      }
+
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      chrome.tabs.onUpdated.removeListener(listener);
+      resolve(tab);
+    };
+
+    chrome.tabs.onUpdated.addListener(listener);
+
+    chrome.tabs.get(tabId).then((tab) => {
+      if (tab?.status === "complete" && !settled) {
+        settled = true;
+        clearTimeout(timer);
+        chrome.tabs.onUpdated.removeListener(listener);
+        resolve(tab);
+      }
+    }).catch(() => {});
+  });
+}
+
+async function getAcademicClassOptions(tabId) {
+  return runMain(tabId, () => {
+    if (!/\/IlkOgretim\/OKL\/IOK09004\.aspx/i.test(location.pathname)) {
+      throw new Error("IOK09004 Ders Öğretmenleri sayfası açık değil.");
+    }
+
+    const select = document.querySelector("#ddlSinifiSubesi");
+
+    if (!select) {
+      throw new Error("Sınıf/şube seçimi bulunamadı.");
+    }
+
+    return [...select.options]
+      .map((option) => ({
+        code: String(option.value || "").trim(),
+        name: String(option.textContent || "")
+          .replace(/\s+/g, " ")
+          .trim(),
+      }))
+      .filter(
+        (item) =>
+          item.code &&
+          item.code !== "-1" &&
+          item.name
+      );
+  });
+}
+
+async function selectAndListAcademicClass(tabId, classCode) {
+  await runMain(tabId, (value) => {
+    const form = document.querySelector("#Form1");
+    const select = document.querySelector("#ddlSinifiSubesi");
+    const pageMode = document.querySelector("#pageMode");
+    const hdnListe = document.querySelector("#hdnListe");
+    const hdnSubeKodu = document.querySelector("#hdnSubeKodu");
+    const hdnGizli = document.querySelector("#hdnGizli");
+    const hdnSecimKnt = document.querySelector("#hdnSecimKnt");
+    const hiddenKaydet = document.querySelector("#hiddenKaydet");
+
+    if (!form || !select || !pageMode || !hdnListe) {
+      throw new Error("IOK09004 formu beklenen alanları içermiyor.");
+    }
+
+    select.value = value;
+
+    if (select.value !== value) {
+      throw new Error("Sınıf/şube seçilemedi: " + value);
+    }
+
+    pageMode.value = "Listele";
+    hdnListe.value = "1";
+
+    if (hdnSubeKodu) hdnSubeKodu.value = value;
+    if (hdnGizli) hdnGizli.value = "0";
+    if (hdnSecimKnt) hdnSecimKnt.value = "";
+    if (hiddenKaydet) hiddenKaydet.value = "";
+
+    form.submit();
+  }, [classCode]);
+
+  await waitForTabComplete(tabId);
+
+  await new Promise((resolve) => setTimeout(resolve, 500));
+}
+
 async function runMain(tabId, func, args = []) {
   let lastError = null;
 
@@ -533,11 +634,55 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         message.action === "SYNC_ACADEMIC"
       ) {
         const tab = await findEOkulTab("academic");
-        const payload = await runMain(tab.id, extractAcademic);
+        const classes = await getAcademicClassOptions(tab.id);
+
+        const assignments = [];
+        const errors = [];
+
+        for (const item of classes) {
+          try {
+            await selectAndListAcademicClass(tab.id, item.code);
+            const current = await runMain(tab.id, extractAcademic);
+
+            for (const assignment of current.assignments || []) {
+              assignments.push(assignment);
+            }
+          } catch (error) {
+            errors.push({
+              classCode: item.code,
+              className: item.name,
+              message: String(error?.message || error),
+            });
+          }
+        }
+
+        const unique = new Map();
+
+        for (const assignment of assignments) {
+          unique.set(
+            assignment.classCode +
+              "|" +
+              assignment.subjectCode +
+              "|" +
+              assignment.teacherName,
+            assignment
+          );
+        }
 
         sendResponse({
           ok: true,
-          payload,
+          payload: {
+            mode: "academic",
+            organizationId: "ilk-okul",
+            periodCode: "",
+            institutionCode: "",
+            importedAt: new Date().toISOString(),
+            classes,
+            students: [],
+            assignments: [...unique.values()],
+            schedules: [],
+            errors,
+          },
         });
         return;
       }
