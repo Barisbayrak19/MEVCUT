@@ -1282,6 +1282,12 @@ function IntegrationCenterView() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [extensionReady, setExtensionReady] = useState(false);
+  const [extensionStatus, setExtensionStatus] = useState<{
+    extensionVersion?: string;
+    eOkulTabs?: number;
+    attendanceTabs?: number;
+    academicTabs?: number;
+  }>({});
 
   const loadQueue = async () => {
     if (!profile?.organizationId || profile.role !== "admin") return;
@@ -1321,6 +1327,15 @@ function IntegrationCenterView() {
     const extensionReadyHandler = () => {
       setExtensionReady(true);
       setStatus("Chrome e-Okul köprüsü hazır.");
+
+      window.postMessage(
+        {
+          source: "MEVCUT",
+          type: "MEVCUT_EOKUL_COMMAND",
+          action: "CHECK_STATUS",
+        },
+        window.location.origin
+      );
     };
 
     const handler = async (event: Event) => {
@@ -1338,6 +1353,41 @@ function IntegrationCenterView() {
       if (!detail) return;
 
       setBusy(false);
+
+      if (
+        detail.ok &&
+        detail.action === "CHECK_STATUS" &&
+        detail.payload
+      ) {
+        const payload = detail.payload as {
+          extensionVersion?: string;
+          eOkulTabs?: Array<unknown>;
+          attendanceTabs?: number;
+          academicTabs?: number;
+        };
+
+        setExtensionStatus({
+          extensionVersion: payload.extensionVersion,
+          eOkulTabs: payload.eOkulTabs?.length || 0,
+          attendanceTabs: payload.attendanceTabs || 0,
+          academicTabs: payload.academicTabs || 0,
+        });
+
+        if (
+          payload.attendanceTabs ||
+          payload.academicTabs
+        ) {
+          setStatus(
+            "Köprü hazır · e-Okul sekmesi algılandı."
+          );
+        } else {
+          setStatus(
+            "Köprü hazır · e-Okul sekmesi henüz açık değil."
+          );
+        }
+
+        return;
+      }
 
       if (!detail.ok) {
         setError(detail.error || "e-Okul işlemi başarısız.");
@@ -1586,7 +1636,36 @@ function IntegrationCenterView() {
         </span>
       </div>
 
+      <div className="integration-summary">
+        <span>
+          Bridge <strong>{extensionStatus.extensionVersion || "?"}</strong>
+        </span>
+        <span>
+          e-Okul sekmesi <strong>{extensionStatus.eOkulTabs ?? 0}</strong>
+        </span>
+        <span>
+          Yoklama ekranı <strong>{extensionStatus.attendanceTabs ?? 0}</strong>
+        </span>
+        <span>
+          Ders-öğretmen <strong>{extensionStatus.academicTabs ?? 0}</strong>
+        </span>
+      </div>
+
       <div className="integration-actions">
+        <article className="integration-card">
+          <strong>Bağlantı Testi</strong>
+          <p>
+            MEVCUT → Chrome Bridge → e-Okul zincirini kontrol eder.
+          </p>
+          <button
+            className="secondary"
+            disabled={busy || !extensionReady}
+            onClick={() => sendCommand("CHECK_STATUS")}
+          >
+            Bağlantıyı Test Et
+          </button>
+        </article>
+
         <article className="integration-card">
           <strong>Sınıf + Öğrenci Senkronizasyonu</strong>
           <p>
