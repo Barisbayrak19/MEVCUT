@@ -143,6 +143,34 @@ async function getAcademicClassOptions(tabId) {
 }
 
 async function selectAndListAcademicClass(tabId, classCode) {
+  const navigationDone = new Promise((resolve, reject) => {
+    let settled = false;
+
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      chrome.tabs.onUpdated.removeListener(listener);
+      reject(new Error("e-Okul sınıf listesi yüklenemedi: zaman aşımı."));
+    }, 20000);
+
+    const listener = (updatedTabId, changeInfo, tab) => {
+      if (
+        updatedTabId !== tabId ||
+        changeInfo.status !== "complete"
+      ) {
+        return;
+      }
+
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      chrome.tabs.onUpdated.removeListener(listener);
+      resolve(tab);
+    };
+
+    chrome.tabs.onUpdated.addListener(listener);
+  });
+
   await runMain(tabId, (value) => {
     const form = document.querySelector("#Form1");
     const select = document.querySelector("#ddlSinifiSubesi");
@@ -174,10 +202,11 @@ async function selectAndListAcademicClass(tabId, classCode) {
     form.submit();
   }, [classCode]);
 
-  await waitForTabComplete(tabId);
-
+  await navigationDone;
   await new Promise((resolve) => setTimeout(resolve, 500));
 }
+
+
 
 async function runMain(tabId, func, args = []) {
   let lastError = null;
