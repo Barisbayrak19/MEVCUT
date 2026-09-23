@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "./context/AuthContext";
+import { signInWithEmailAndPassword } from "./firebase/auth";
 import { importEOkulData } from "./firebase/school";
 import type { EOkulImportPayload } from "./types/school";
 
@@ -13,6 +14,60 @@ const stats = [
 type ImportPayload = EOkulImportPayload & {
   errors?: { className: string; message: string }[];
 };
+
+function LoginView() {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setError("");
+    setBusy(true);
+    try {
+      await signInWithEmailAndPassword(email.trim(), password);
+    } catch (err) {
+      const e = err as { code?: string; message?: string };
+      setError(e?.code === "auth/invalid-credential"
+        ? "E-posta veya şifre hatalı."
+        : e?.message || "Giriş yapılamadı.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="auth-screen">
+      <form className="auth-card" onSubmit={submit}>
+        <div className="brand-mark">M</div>
+        <p className="eyebrow">DİJİTAL YOKLAMA</p>
+        <h1>MEVCUT</h1>
+        <p>Yönetici veya öğretmen hesabınızla giriş yapın.</p>
+        <input
+          type="email"
+          placeholder="E-posta"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          autoComplete="email"
+          required
+        />
+        <input
+          type="password"
+          placeholder="Şifre"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          autoComplete="current-password"
+          required
+        />
+        {error && <div className="import-error">{error}</div>}
+        <button className="primary" type="submit" disabled={busy}>
+          {busy ? "Giriş yapılıyor..." : "Giriş Yap"}
+        </button>
+      </form>
+    </div>
+  );
+}
 
 function EOkulTransferView() {
   const { profile, loading: authLoading, profileError } = useAuth();
@@ -102,11 +157,41 @@ function EOkulTransferView() {
 }
 
 export default function App() {
+  const { user, profile, loading, profileError } = useAuth();
   const [active, setActive] = useState(() =>
     new URLSearchParams(window.location.search).get("eokulImport") === "1"
       ? "e-Okul Aktarım"
       : "Ana Sayfa"
   );
+
+  if (loading) {
+    return (
+      <div className="auth-screen">
+        <div className="auth-card">
+          <div className="brand-mark">M</div>
+          <h1>MEVCUT</h1>
+          <p>Oturum kontrol ediliyor...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <LoginView />;
+  }
+
+  if (!profile) {
+    return (
+      <div className="auth-screen">
+        <div className="auth-card">
+          <div className="brand-mark">M</div>
+          <h1>MEVCUT</h1>
+          <p>{profileError || "Kullanıcı profili bulunamadı."}</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
