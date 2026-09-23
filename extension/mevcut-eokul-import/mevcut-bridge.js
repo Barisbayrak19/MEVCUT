@@ -2,13 +2,13 @@
   if (location.origin !== "https://mevcut-33328.web.app") return;
 
   const sendResult = (detail) => {
-    window.postMessage(
-      {
-        source: "MEVCUT_EXTENSION",
-        type: "MEVCUT_EOKUL_RESULT",
-        ...detail,
-      },
-      location.origin
+    window.dispatchEvent(
+      new CustomEvent("MEVCUT_EOKUL_RESULT", {
+        detail: {
+          source: "MEVCUT_EXTENSION",
+          ...detail,
+        },
+      })
     );
   };
 
@@ -54,11 +54,9 @@
     );
   });
 
-  window.postMessage(
-    {
-      source: "MEVCUT_EXTENSION",
-      type: "MEVCUT_EOKUL_EXTENSION_READY",
-    },
-    location.origin
+  window.dispatchEvent(
+    new CustomEvent("MEVCUT_EOKUL_EXTENSION_READY", {
+      detail: { source: "MEVCUT_EXTENSION" },
+    })
   );
 })();
