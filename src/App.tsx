@@ -308,16 +308,27 @@ function AttendanceView() {
 
         setStudents(studentItems);
 
-        const lesson =
-          selectedLesson ||
-          lessonItems.find(
-            (item) =>
-              item.classCode === selectedClass
-          );
+        const existingLesson =
+          lessonItems.find((item) => {
+            if (selectedLesson) {
+              return (
+                item.classCode === selectedLesson.classCode &&
+                item.period === selectedLesson.period &&
+                item.subjectCode === selectedLesson.subjectCode &&
+                item.teacherUid === user?.uid
+              );
+            }
+
+            return (
+              item.classCode === selectedClass &&
+              item.period === 0 &&
+              item.teacherUid === user?.uid
+            );
+          });
 
         const existing =
-          lesson?.records?.length
-            ? lesson.records
+          existingLesson?.records?.length
+            ? existingLesson.records
             : legacy;
 
         const next: Record<
