@@ -114,14 +114,11 @@ export async function getClassStudents(
   classCode: string
 ): Promise<SchoolStudent[]> {
   const snapshot = await getDocs(
-    query(
-      collection(db, "students"),
-      where("organizationId", "==", organizationId),
-      where("classCode", "==", classCode)
-    )
+    query(collection(db, "students"), where("organizationId", "==", organizationId))
   );
 
   return snapshot.docs
+    .filter((item) => String(item.data().classCode || "") === classCode)
     .map((item) => {
       const data = item.data();
       return {
