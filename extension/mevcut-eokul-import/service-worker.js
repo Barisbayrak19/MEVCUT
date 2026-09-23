@@ -231,50 +231,79 @@ async function extractStudents() {
 }
 
 function extractAcademic() {
-  if (!/\/IlkOgretim\/OKL\/IOK09004\.aspx/i.test(location.pathname)) {
+  if (!/\\/IlkOgretim\\/OKL\\/IOK09004\\.aspx/i.test(location.pathname)) {
     throw new Error("IOK09004 Ders Öğretmenleri sayfası açık değil.");
   }
 
-  const select = document.querySelector("#ddlSinifiSubesi");
-  const selected = select?.selectedOptions?.[0];
+  const classSelect = document.querySelector("#ddlSinifiSubesi");
+  const selectedClass = classSelect?.selectedOptions?.[0];
 
-  if (!selected || selected.value === "-1") {
+  if (!selectedClass || selectedClass.value === "-1") {
     throw new Error("Önce e-Okul'da bir sınıf/şube seçin.");
   }
 
-  const table =
-    document.querySelector("#Table5") ||
-    document.querySelector("#dgListe");
+  const table = document.querySelector("#dgListe");
 
   if (!table) {
-    throw new Error("Ders öğretmeni listesi bulunamadı.");
+    throw new Error("Ders öğretmeni listesi (#dgListe) bulunamadı.");
+  }
+
+  const subjectOptions = new Map();
+  const subjectSelect = document.querySelector("#ddlDersler");
+
+  if (subjectSelect) {
+    for (const option of [...subjectSelect.options]) {
+      const code = String(option.value || "").trim();
+      const label = String(option.textContent || "")
+        .replace(/\\s+/g, " ")
+        .trim();
+
+      if (!code || code === "-1" || !label) continue;
+
+      const normalized = label
+        .replace(/\\s*\\(\\d+\\s*Saat\\)\\s*$/i, "")
+        .trim()
+        .toLocaleLowerCase("tr-TR");
+
+      subjectOptions.set(normalized, code);
+    }
   }
 
   const assignments = [];
 
-  for (const row of [...table.querySelectorAll("tr")].slice(1)) {
-    const cells = [...row.querySelectorAll("td")]
+  for (const row of [...table.querySelectorAll("tbody > tr")].slice(1)) {
+    const cells = [...row.querySelectorAll(":scope > td")]
       .map((cell) =>
         String(cell.textContent || "")
-          .replace(/\s+/g, " ")
+          .replace(/\\s+/g, " ")
           .trim()
       );
 
-    if (
-      cells.length < 3 ||
-      !/\d{8,11}/.test(cells[0])
-    ) {
-      continue;
-    }
+    if (cells.length < 4) continue;
+
+    const teacherTcNo = cells[1];
+    const teacherName = cells[2];
+    const subjectName = cells[3];
+
+    if (!/^\\d{11}$/.test(teacherTcNo)) continue;
+    if (!teacherName || !subjectName) continue;
+
+    const normalizedSubject = subjectName
+      .toLocaleLowerCase("tr-TR");
+
+    const subjectCode =
+      subjectOptions.get(normalizedSubject) ||
+      subjectName.toLocaleUpperCase("tr-TR");
 
     assignments.push({
-      classCode: String(selected.value),
-      className: String(selected.textContent || "")
-        .replace(/\s+/g, " ")
+      classCode: String(selectedClass.value),
+      className: String(selectedClass.textContent || "")
+        .replace(/\\s+/g, " ")
         .trim(),
-      subjectCode: cells[2].toLocaleUpperCase("tr-TR"),
-      subjectName: cells[2],
-      teacherName: cells[1],
+      subjectCode,
+      subjectName,
+      teacherName,
+      teacherTcNo,
       source: "e-okul",
     });
   }
@@ -285,7 +314,7 @@ function extractAcademic() {
     unique.set(
       item.classCode +
         "|" +
-        item.subjectName +
+        item.subjectCode +
         "|" +
         item.teacherName,
       item
