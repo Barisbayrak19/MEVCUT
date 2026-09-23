@@ -415,7 +415,7 @@ export default function App() {
         <div className="sidebar-footer">MVP 0.3</div>
       </aside>
       <main className="main">
-        <header className="topbar"><div><p className="eyebrow">DİJİTAL YOKLAMA</p><h1>{active}</h1></div><div className="user-chip">Yönetici</div></header>
+        <header className="topbar"><div><p className="eyebrow">DİJİTAL YOKLAMA</p><h1>{active}</h1></div><div className="user-chip">{profile.role === "admin" ? "Yönetici" : "Öğretmen"}</div></header>
         {active === "Yoklama" ? <AttendanceView /> : active === "e-Okul Aktarım" ? <EOkulTransferView /> : <>
           <section className="welcome-card"><div><p className="eyebrow">MEVCUT</p><h2>Yoklamayı tek yerden yönet.</h2><p>Öğretmen yoklamayı girer, okul yönetimi takip eder, e-Okul'a aktarım köprü üzerinden yapılır.</p></div><button className="primary" onClick={() => setActive("Yoklama")}>Yoklamaya Başla →</button></section>
           <section className="stats-grid">{stats.map((stat) => <div className="stat-card" key={stat.label}><div className="stat-icon">{stat.icon}</div><div><span>{stat.label}</span><strong>{stat.value}</strong></div></div>)}</section>
