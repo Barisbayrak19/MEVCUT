@@ -5,8 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "build": "tsc -b && vite build && npm run check:extension",
+    "preview": "vite preview",
+    "check:extension": "node --check extension/mevcut-eokul-import/service-worker.js && node --check extension/mevcut-eokul-import/mevcut-bridge.js && node --check extension/mevcut-eokul-import/popup.js"
   },
   "dependencies": {
     "firebase": "^12.3.0",
