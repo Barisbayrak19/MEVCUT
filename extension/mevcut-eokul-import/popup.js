@@ -13,26 +13,54 @@ function setStatus(text, cls = "") {
 
 async function findTabs() {
   const tabs = await chrome.tabs.query({});
-  const eOkul = tabs.find(t => /^https:\/\/e-okul\.meb\.gov\.tr\/IlkOgretim\/OKL\//i.test(t.url || ""));
+  const isEOkul = (url = "") =>
+    /^https:\/\/(?:www\.)?e-okul\.meb\.gov\.tr\//i.test(url) &&
+    /\/IlkOgretim\/OKL\//i.test(url);
+
+  const eOkul = tabs.find(t => isEOkul(t.url));
   const mevcut = tabs.find(t => /^https:\/\/mevcut-33328\.web\.app\//i.test(t.url || ""));
   return { eOkul, mevcut };
 }
 
 async function check() {
-  const { eOkul, mevcut } = await findTabs();
-  eOkulTabId = eOkul?.id ?? null;
+  try {
+    pageEl.textContent = "Kontrol ediliyor...";
 
-  if (!eOkul) {
-    pageEl.textContent = "e-Okul sekmesi bulunamadı.";
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    const activeTab = tabs[0];
+
+    const isEOkul = (url = "") =>
+      /^https:\/\/(?:www\.)?e-okul\.meb\.gov\.tr\//i.test(url) &&
+      /\/IlkOgretim\/OKL\//i.test(url);
+
+    let eOkul;
+    if (isEOkul(activeTab?.url)) {
+      eOkul = activeTab;
+    } else {
+      ({ eOkul } = await findTabs());
+    }
+
+    if (!eOkul) {
+      pageEl.textContent = "e-Okul sekmesi bulunamadı.";
+      infoEl.textContent = "e-Okul'da Öğrenci Günlük Devamsızlık Girişi sayfasını açın.";
+      startEl.disabled = true;
+      return;
+    }
+
+    eOkulTabId = eOkul.id;
+
+    const { mevcut } = await findTabs();
+    pageEl.textContent = "e-Okul hazır.";
+    infoEl.textContent = mevcut
+      ? "MEVCUT sekmesi de açık. Veriler doğrudan aktarılacak."
+      : "MEVCUT sekmesi bulunamadı; aktarım sırasında açılacak.";
+    startEl.disabled = false;
+  } catch (error) {
+    pageEl.textContent = "Kontrol başarısız.";
+    infoEl.textContent = error?.message || String(error);
+    setStatus("Hata: " + (error?.message || error), "error");
     startEl.disabled = true;
-    return;
   }
-
-  pageEl.textContent = "e-Okul hazır.";
-  infoEl.textContent = mevcut
-    ? "MEVCUT sekmesi de açık. Veriler doğrudan aktarılacak."
-    : "MEVCUT sekmesi bulunamadı; aktarım sırasında açılacak.";
-  startEl.disabled = false;
 }
 
 startEl.addEventListener("click", async () => {
@@ -41,12 +69,14 @@ startEl.addEventListener("click", async () => {
   setStatus("e-Okul verileri okunuyor...");
 
   try {
+    if (!eOkulTabId) throw new Error("e-Okul sekmesi bulunamadı.");
+
     const extracted = await chrome.scripting.executeScript({
       target: { tabId: eOkulTabId },
       world: "MAIN",
       func: async () => {
         const app = window.app;
-        if (!app) throw new Error("e-Okul uygulaması bulunamadı. Günlük Devamsızlık sayfasını açın.");
+        if (!app) throw new Error("e-Okul uygulaması bulunamadı. Öğrenci Günlük Devamsızlık Girişi sayfasını açın.");
 
         const options = [...document.querySelectorAll("select option")]
           .map(o => ({
