@@ -146,11 +146,22 @@ export async function getAttendance(
   classCode: string,
   date: string
 ): Promise<AttendanceRecord[]> {
-  const snapshot = await getDoc(
-    doc(db, "attendance", attendanceDocId(organizationId, classCode, date))
+  // A direct get() of a not-yet-created attendance document is denied by
+  // resource-based rules because there is no resource.data to evaluate.
+  // Query the tenant's attendance documents instead; an empty result is
+  // a normal, authorized read and needs no composite index.
+  const snapshot = await getDocs(
+    query(collection(db, "attendance"), where("organizationId", "==", organizationId))
   );
-  if (!snapshot.exists()) return [];
-  return (snapshot.data().records || []) as AttendanceRecord[];
+
+  const item = snapshot.docs.find((entry) => {
+    const data = entry.data();
+    return String(data.classCode || "") === classCode
+      && String(data.date || "") === date;
+  });
+
+  if (!item) return [];
+  return (item.data().records || []) as AttendanceRecord[];
 }
 
 export async function saveAttendance(
