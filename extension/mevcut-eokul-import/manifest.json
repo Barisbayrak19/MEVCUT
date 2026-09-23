@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "MEVCUT e-Okul Veri Aktarımı",
+  "version": "0.1.0",
+  "description": "e-Okul sınıf ve öğrenci verilerini MEVCUT'a aktarır.",
+  "permissions": [
+    "tabs",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://e-okul.meb.gov.tr/*",
+    "https://mevcut-33328.web.app/*"
+  ],
+  "action": {
+    "default_title": "MEVCUT e-Okul Aktarımı",
+    "default_popup": "popup.html"
+  }
+}
