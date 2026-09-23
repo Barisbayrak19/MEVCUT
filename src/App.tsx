@@ -1299,6 +1299,7 @@ function IntegrationCenterView() {
   const [status, setStatus] = useState("Hazır.");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [extensionReady, setExtensionReady] = useState(false);
 
   const loadQueue = async () => {
     if (!profile?.organizationId || profile.role !== "admin") return;
@@ -1334,6 +1335,11 @@ function IntegrationCenterView() {
     }
 
     void loadQueue();
+
+    const extensionReadyHandler = () => {
+      setExtensionReady(true);
+      setStatus("Chrome e-Okul köprüsü hazır.");
+    };
 
     const handler = async (event: Event) => {
       const detail =
@@ -1452,13 +1458,22 @@ function IntegrationCenterView() {
       }
     };
 
+    window.addEventListener(
+      "MEVCUT_EOKUL_EXTENSION_READY",
+      extensionReadyHandler
+    );
     window.addEventListener("MEVCUT_EOKUL_RESULT", handler);
 
-    return () =>
+    return () => {
+      window.removeEventListener(
+        "MEVCUT_EOKUL_EXTENSION_READY",
+        extensionReadyHandler
+      );
       window.removeEventListener(
         "MEVCUT_EOKUL_RESULT",
         handler
       );
+    };
   }, [
     authLoading,
     profile?.organizationId,
@@ -1475,6 +1490,14 @@ function IntegrationCenterView() {
     setBusy(true);
     setError("");
     setStatus("e-Okul işlemi başlatılıyor...");
+
+    if (!extensionReady) {
+      setBusy(false);
+      setError(
+        "MEVCUT e-Okul köprüsü bulunamadı. Chrome eklentisinin yüklü ve etkin olduğundan emin olun."
+      );
+      return;
+    }
 
     window.postMessage(
       {
@@ -1551,8 +1574,16 @@ function IntegrationCenterView() {
             Chrome eklentisi arka planda köprü olarak çalışır.
           </p>
         </div>
-        <span className="status-badge">
-          {busy ? "İşlem sürüyor" : "Hazır"}
+        <span
+          className={
+            extensionReady
+              ? "status-badge extension-status ready"
+              : "status-badge extension-status"
+          }
+        >
+          {extensionReady
+            ? "e-Okul köprüsü hazır"
+            : "e-Okul köprüsü bekleniyor"}
         </span>
       </div>
 
