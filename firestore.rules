@@ -170,6 +170,23 @@ service cloud.firestore {
     }
 
 
+    match /eokulQueue/{queueId} {
+      allow read:
+        if isAdmin()
+        && resource.data.organizationId ==
+           currentUser().data.organizationId;
+
+      allow create:
+        if adminSameOrg(request.resource.data);
+
+      allow update:
+        if adminSameOrg(request.resource.data);
+
+      allow delete:
+        if adminSameOrg(resource.data);
+    }
+
+
     match /{document=**} {
       allow read, write: if false;
     }
