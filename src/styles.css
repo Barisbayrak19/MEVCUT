@@ -70,3 +70,103 @@
 .logout{border:1px solid #e2e8f0;background:#fff;border-radius:9px;padding:9px 12px;cursor:pointer;font:inherit}
 .primary:disabled,.secondary:disabled,.attendance-status:disabled{opacity:.6;cursor:not-allowed}
 @media(max-width:900px){.review-card,.history-card{align-items:flex-start;flex-direction:column}.review-actions{width:100%}.review-actions button{flex:1}.history-counts{width:100%}.info-box{align-items:flex-start;flex-direction:column}}
+
+
+.rule-warning{
+  margin:16px 0;
+  padding:14px 16px;
+  border:1px solid #f59e0b;
+  border-radius:12px;
+  background:#fffbeb;
+  color:#78350f;
+}
+.rule-warning strong{
+  display:block;
+  margin-bottom:6px;
+}
+.rule-warning div div{
+  margin-top:4px;
+}
+.integration-actions{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:16px;
+  margin-top:20px;
+}
+.integration-card{
+  padding:18px;
+  border:1px solid #e5e7eb;
+  border-radius:14px;
+  background:#fff;
+}
+.integration-card strong{
+  display:block;
+  margin-bottom:8px;
+}
+.integration-card p{
+  margin:0 0 14px;
+  color:#64748b;
+}
+.integration-summary{
+  display:flex;
+  gap:12px;
+  flex-wrap:wrap;
+  margin:18px 0;
+}
+.integration-summary span{
+  padding:8px 12px;
+  border-radius:999px;
+  background:#f1f5f9;
+}
+.queue-list{
+  margin-top:22px;
+}
+.compact-header{
+  margin-bottom:12px;
+}
+.queue-card{
+  display:flex;
+  justify-content:space-between;
+  gap:16px;
+  align-items:center;
+  padding:14px 16px;
+  border:1px solid #e5e7eb;
+  border-radius:12px;
+  margin-top:10px;
+  background:#fff;
+}
+.queue-card > div{
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+}
+.queue-card small{
+  color:#64748b;
+}
+.lesson-card.current{
+  outline:2px solid currentColor;
+}
+.extension-status{
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+}
+.extension-status::before{
+  content:"";
+  width:8px;
+  height:8px;
+  border-radius:50%;
+  background:#94a3b8;
+}
+.extension-status.ready::before{
+  background:#16a34a;
+}
+@media (max-width: 760px){
+  .integration-actions{
+    grid-template-columns:1fr;
+  }
+  .queue-card{
+    flex-direction:column;
+    align-items:stretch;
+  }
+}
