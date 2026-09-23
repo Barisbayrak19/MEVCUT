@@ -162,6 +162,7 @@ async function selectAndListAcademicClass(tabId, classCode) {
       }
 
       if (settled) return;
+
       settled = true;
       clearTimeout(timer);
       chrome.tabs.onUpdated.removeListener(listener);
@@ -172,17 +173,13 @@ async function selectAndListAcademicClass(tabId, classCode) {
   });
 
   await runMain(tabId, (value) => {
-    const form = document.querySelector("#Form1");
     const select = document.querySelector("#ddlSinifiSubesi");
-    const pageMode = document.querySelector("#pageMode");
-    const hdnListe = document.querySelector("#hdnListe");
-    const hdnSubeKodu = document.querySelector("#hdnSubeKodu");
-    const hdnGizli = document.querySelector("#hdnGizli");
-    const hdnSecimKnt = document.querySelector("#hdnSecimKnt");
-    const hiddenKaydet = document.querySelector("#hiddenKaydet");
+    const button = document.querySelector("#btnListele");
 
-    if (!form || !select || !pageMode || !hdnListe) {
-      throw new Error("IOK09004 formu beklenen alanları içermiyor.");
+    if (!select || !button) {
+      throw new Error(
+        "IOK09004 sınıf seçimi veya Listele butonu bulunamadı."
+      );
     }
 
     select.value = value;
@@ -191,22 +188,22 @@ async function selectAndListAcademicClass(tabId, classCode) {
       throw new Error("Sınıf/şube seçilemedi: " + value);
     }
 
-    pageMode.value = "Listele";
-    hdnListe.value = "1";
-
-    if (hdnSubeKodu) hdnSubeKodu.value = value;
-    if (hdnGizli) hdnGizli.value = "0";
-    if (hdnSecimKnt) hdnSecimKnt.value = "";
-    if (hiddenKaydet) hiddenKaydet.value = "";
-
-    form.submit();
+    /*
+     * ÖNEMLİ:
+     * e-Okul ASP.NET formunda Listele butonunun
+     * name/value bilgisinin POST'a dahil olması gerekiyor.
+     *
+     * form.submit() bunu göndermez.
+     * Gerçek butona click() yaptığımızda ise
+     * NesneKontrol() çalışır, pageMode/hdnListe ayarlanır
+     * ve btnListele=Listele POST'a dahil olur.
+     */
+    button.click();
   }, [classCode]);
 
   await navigationDone;
   await new Promise((resolve) => setTimeout(resolve, 500));
 }
-
-
 
 async function runMain(tabId, func, args = []) {
   let lastError = null;
