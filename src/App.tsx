@@ -1,4 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useAuth } from "./context/AuthContext";
+import { importEOkulData } from "./firebase/school";
+import type { EOkulImportPayload } from "./types/school";
 
 const stats = [
   { label: "Bugünkü Yoklama", value: "0", icon: "✓" },
@@ -6,6 +9,73 @@ const stats = [
   { label: "İşlenen", value: "0", icon: "↗" },
   { label: "Hata", value: "0", icon: "!" },
 ];
+
+function EOkulTransferView() {
+  const { profile } = useAuth();
+  const [status, setStatus] = useState("Chrome eklentisi bekleniyor.");
+  const [summary, setSummary] = useState<{ classes: number; students: number } | null>(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const handler = async (event: Event) => {
+      const payload = (event as CustomEvent<EOkulImportPayload & { errors?: { className: string; message: string }[] }>).detail;
+      if (!payload?.classes || !payload?.students) return;
+
+      setError("");
+      setStatus("e-Okul verileri Firestore'a aktarılıyor...");
+
+      try {
+        const result = await importEOkulData({
+          organizationId: profile?.organizationId || "ilk-okul",
+          periodCode: payload.periodCode,
+          institutionCode: payload.institutionCode,
+          importedAt: payload.importedAt,
+          classes: payload.classes,
+          students: payload.students,
+        });
+
+        setSummary({ classes: result.classCount, students: result.studentCount });
+        setStatus("Aktarım tamamlandı.");
+        if (payload.errors?.length) {
+          setError(payload.errors.map(x => `${x.className}: ${x.message}`).join("\n"));
+        }
+      } catch (err) {
+        setStatus("Aktarım başarısız.");
+        setError(String((err as Error)?.message || err));
+      }
+    };
+
+    window.addEventListener("mevcut-eokul-import", handler);
+    return () => window.removeEventListener("mevcut-eokul-import", handler);
+  }, [profile?.organizationId]);
+
+  return (
+    <section className="panel">
+      <div className="panel-header">
+        <div>
+          <h3>e-Okul Veri Aktarımı</h3>
+          <p>Sınıf ve öğrenci listesini e-Okul'dan MEVCUT'a al.</p>
+        </div>
+        <span className="status-badge">{status}</span>
+      </div>
+
+      <div className="empty-state">
+        <div className="empty-icon">↕</div>
+        <strong>Chrome eklentisi ile veri al</strong>
+        <p>
+          e-Okul'da Öğrenci Günlük Devamsızlık Girişi sayfasını açın,
+          ardından “MEVCUT e-Okul Veri Aktarımı” eklentisinden aktarımı başlatın.
+        </p>
+        {summary && (
+          <div className="import-summary">
+            <strong>{summary.classes}</strong> sınıf · <strong>{summary.students}</strong> öğrenci aktarıldı.
+          </div>
+        )}
+        {error && <pre className="import-error">{error}</pre>}
+      </div>
+    </section>
+  );
+}
 
 export default function App() {
   const [active, setActive] = useState("Ana Sayfa");
@@ -33,7 +103,7 @@ export default function App() {
           ))}
         </nav>
 
-        <div className="sidebar-footer">MVP 0.1</div>
+        <div className="sidebar-footer">MVP 0.2</div>
       </aside>
 
       <main className="main">
@@ -45,36 +115,42 @@ export default function App() {
           <div className="user-chip">Yönetici</div>
         </header>
 
-        <section className="welcome-card">
-          <div>
-            <p className="eyebrow">MEVCUT</p>
-            <h2>Yoklamayı tek yerden yönet.</h2>
-            <p>Öğretmen yoklamayı girer, okul yönetimi takip eder, e-Okul'a aktarım köprü üzerinden yapılır.</p>
-          </div>
-          <button className="primary" onClick={() => setActive("Yoklama")}>Yoklamaya Başla →</button>
-        </section>
+        {active === "e-Okul Aktarım" ? (
+          <EOkulTransferView />
+        ) : (
+          <>
+            <section className="welcome-card">
+              <div>
+                <p className="eyebrow">MEVCUT</p>
+                <h2>Yoklamayı tek yerden yönet.</h2>
+                <p>Öğretmen yoklamayı girer, okul yönetimi takip eder, e-Okul'a aktarım köprü üzerinden yapılır.</p>
+              </div>
+              <button className="primary" onClick={() => setActive("Yoklama")}>Yoklamaya Başla →</button>
+            </section>
 
-        <section className="stats-grid">
-          {stats.map((stat) => (
-            <div className="stat-card" key={stat.label}>
-              <div className="stat-icon">{stat.icon}</div>
-              <div><span>{stat.label}</span><strong>{stat.value}</strong></div>
-            </div>
-          ))}
-        </section>
+            <section className="stats-grid">
+              {stats.map((stat) => (
+                <div className="stat-card" key={stat.label}>
+                  <div className="stat-icon">{stat.icon}</div>
+                  <div><span>{stat.label}</span><strong>{stat.value}</strong></div>
+                </div>
+              ))}
+            </section>
 
-        <section className="panel">
-          <div className="panel-header">
-            <div><h3>Bugünkü işlemler</h3><p>Henüz kayıt bulunmuyor.</p></div>
-            <span className="status-badge">Hazır</span>
-          </div>
-          <div className="empty-state">
-            <div className="empty-icon">✓</div>
-            <strong>İlk yoklamanı oluştur</strong>
-            <p>MEVCUT'un ilk çalışan modülü burada başlayacak.</p>
-            <button className="secondary" onClick={() => setActive("Yoklama")}>Yoklama ekranını aç</button>
-          </div>
-        </section>
+            <section className="panel">
+              <div className="panel-header">
+                <div><h3>Bugünkü işlemler</h3><p>Henüz kayıt bulunmuyor.</p></div>
+                <span className="status-badge">Hazır</span>
+              </div>
+              <div className="empty-state">
+                <div className="empty-icon">✓</div>
+                <strong>İlk yoklamanı oluştur</strong>
+                <p>MEVCUT'un ilk çalışan modülü burada başlayacak.</p>
+                <button className="secondary" onClick={() => setActive("Yoklama")}>Yoklama ekranını aç</button>
+              </div>
+            </section>
+          </>
+        )}
       </main>
     </div>
   );
