@@ -18,9 +18,21 @@
     const message = event.data;
     if (
       !message ||
-      message.source !== "MEVCUT" ||
-      message.type !== "MEVCUT_EOKUL_COMMAND"
+      message.source !== "MEVCUT"
     ) {
+      return;
+    }
+
+    if (message.type === "MEVCUT_EOKUL_BRIDGE_PING") {
+      window.dispatchEvent(
+        new CustomEvent("MEVCUT_EOKUL_EXTENSION_READY", {
+          detail: { source: "MEVCUT_EXTENSION" },
+        })
+      );
+      return;
+    }
+
+    if (message.type !== "MEVCUT_EOKUL_COMMAND") {
       return;
     }
 
@@ -54,9 +66,13 @@
     );
   });
 
-  window.dispatchEvent(
-    new CustomEvent("MEVCUT_EOKUL_EXTENSION_READY", {
-      detail: { source: "MEVCUT_EXTENSION" },
-    })
-  );
+  const notifyReady = () => {
+    window.dispatchEvent(
+      new CustomEvent("MEVCUT_EOKUL_EXTENSION_READY", {
+        detail: { source: "MEVCUT_EXTENSION" },
+      })
+    );
+  };
+
+  notifyReady();
 })();
