@@ -70,3 +70,14 @@ export interface AttendanceAuditLog {
   changedAt?: unknown;
   action: "status_change" | "approved" | "needs_review";
 }
+
+export interface EOkulQueueItem {
+  id: string;
+  organizationId: string;
+  attendanceId: string;
+  status: "pending" | "processing" | "completed" | "failed";
+  attempts: number;
+  lastError?: string;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+}
