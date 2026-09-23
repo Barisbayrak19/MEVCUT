@@ -6,6 +6,7 @@ export interface TeacherAssignment {
   subjectCode: string;
   subjectName: string;
   teacherName: string;
+  teacherUid?: string;
   source: "e-okul" | "manual";
   importedAt?: string;
 }
@@ -31,6 +32,13 @@ export type AttendanceReviewStatus =
   | "approved"
   | "needs_review";
 
+export interface AttendanceRuleViolation {
+  ruleId: string;
+  severity: "info" | "warning" | "critical";
+  studentNo: string;
+  message: string;
+}
+
 export interface LessonAttendanceRecord {
   studentNo: string;
   status: "present" | "full_day" | "half_day" | "late" | "unknown";
@@ -52,6 +60,7 @@ export interface LessonAttendance {
   reviewStatus: AttendanceReviewStatus;
   updatedBy: string;
   updatedAt?: unknown;
+  ruleViolations?: AttendanceRuleViolation[];
 }
 
 export interface AttendanceAuditLog {
