@@ -65,6 +65,12 @@ service cloud.firestore {
     }
 
     function teacherOwnAttendance(data) {
+      return isTeacher()
+        && data.organizationId == currentUser().data.organizationId
+        && data.teacherUid == request.auth.uid;
+    }
+
+    function teacherCanWriteAttendance(data) {
       return teacherHasSubjectAccess(data)
         && data.teacherUid == request.auth.uid;
     }
@@ -233,7 +239,7 @@ service cloud.firestore {
       allow create:
         if adminSameOrg(request.resource.data)
         || (
-          teacherOwnAttendance(request.resource.data)
+          teacherCanWriteAttendance(request.resource.data)
           && request.resource.data.reviewStatus != "approved"
         )
         || (
@@ -247,7 +253,7 @@ service cloud.firestore {
       allow update:
         if adminSameOrg(request.resource.data)
         || (
-          teacherOwnAttendance(request.resource.data)
+          teacherCanWriteAttendance(request.resource.data)
           && resource.data.reviewStatus != "approved"
           && request.resource.data.reviewStatus != "approved"
         )
