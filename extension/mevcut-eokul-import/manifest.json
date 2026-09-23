@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "MEVCUT e-Okul Veri Aktarımı",
-  "version": "0.2.0",
-  "description": "e-Okul sınıf, öğrenci ve ders-öğretmen verilerini MEVCUT'a aktarır.",
+  "name": "MEVCUT e-Okul Bridge",
+  "version": "0.3.0",
+  "description": "MEVCUT Entegrasyon Merkezi ile e-Okul arasında arka plan köprüsü.",
   "permissions": [
     "tabs",
     "scripting"
@@ -11,19 +11,22 @@
     "https://e-okul.meb.gov.tr/*",
     "https://mevcut-33328.web.app/*"
   ],
+  "background": {
+    "service_worker": "service-worker.js"
+  },
   "content_scripts": [
     {
       "matches": [
-        "https://e-okul.meb.gov.tr/IlkOgretim/OKL/*"
+        "https://mevcut-33328.web.app/*"
       ],
       "js": [
-        "academic-bridge.js"
+        "mevcut-bridge.js"
       ],
       "run_at": "document_idle"
     }
   ],
   "action": {
-    "default_title": "MEVCUT e-Okul Aktarımı",
+    "default_title": "MEVCUT e-Okul Bridge",
     "default_popup": "popup.html"
   }
 }
