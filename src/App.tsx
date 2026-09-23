@@ -516,30 +516,12 @@ function AttendanceView() {
         ruleViolations: violations,
       });
 
-      setLessonRecords((current) => [
-        ...current.filter((item) =>
-          item.id !== selectedLessonId
-        ),
-        {
-          id: selectedLessonId || "local",
-          organizationId: profile.organizationId,
-          date,
-          classCode: selectedLesson?.classCode || selectedClass,
-          className:
-            selectedLesson?.className ||
-            selectedClassName,
-          subjectCode,
-          subjectName,
-          teacherUid: user.uid,
-          teacherName: profile.displayName,
-          period: selectedLesson?.period || 0,
-          lessonKey: selectedLessonId || "local",
-          records,
-          reviewStatus: "submitted",
-          updatedBy: user.uid,
-          ruleViolations: violations,
-        },
-      ]);
+      const refreshed = await getLessonAttendances(
+        profile.organizationId,
+        date,
+        profile.role === "teacher" ? user.uid : undefined
+      );
+      setLessonRecords(refreshed);
 
       setMessage(
         violations.length
