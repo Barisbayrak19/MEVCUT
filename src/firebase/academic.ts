@@ -46,10 +46,17 @@ export async function getTeacherAssignments(
         subjectName: String(data.subjectName || ""),
         teacherName: String(data.teacherName || ""),
         teacherUid: data.teacherUid ? String(data.teacherUid) : undefined,
+        teacherTcNo: data.teacherTcNo ? String(data.teacherTcNo) : undefined,
         source: data.source === "manual" ? "manual" : "e-okul",
       } satisfies TeacherAssignment;
     })
-    .filter((item) => !wanted || normalize(item.teacherName) === wanted)
+    .filter(
+      (item) =>
+        item.subjectName &&
+        item.subjectName !== "T.C. Kimlik No" &&
+        item.teacherName &&
+        (!wanted || normalize(item.teacherName) === wanted)
+    )
     .sort((a, b) =>
       (a.className + a.subjectName).localeCompare(
         b.className + b.subjectName,
@@ -105,6 +112,20 @@ export async function importAcademicData(payload: {
   assignments: Omit<TeacherAssignment, "id" | "organizationId">[];
   schedules?: Omit<ScheduleEntry, "id" | "organizationId">[];
 }) {
+  const cleanAssignments = cleanPayload.assignments.filter(
+    (item) =>
+      item.classCode &&
+      item.className &&
+      item.teacherName &&
+      item.subjectName &&
+      item.subjectName !== "T.C. Kimlik No"
+  );
+
+  const cleanPayload = {
+    ...payload,
+    assignments: cleanAssignments,
+  };
+
   const usersSnapshot = await getDocs(collection(db, "users"));
   const teachers = usersSnapshot.docs
     .map((item) => ({
@@ -116,13 +137,13 @@ export async function importAcademicData(payload: {
     }))
     .filter(
       (item) =>
-        item.organizationId === payload.organizationId &&
+        item.organizationId === cleanPayload.organizationId &&
         item.role === "teacher" &&
         item.active
     );
 
   const normalizeName = (value: string) =>
-    value.trim().toLocaleLowerCase("tr-TR").replace(/\\s+/g, " ");
+    value.trim().toLocaleLowerCase("tr-TR").replace(/\s+/g, " ");
 
   const resolveTeacherUid = (teacherName: string) =>
     teachers.find(
@@ -139,12 +160,12 @@ export async function importAcademicData(payload: {
   const existingSnapshot = await getDocs(
     query(
       collection(db, "teacherAssignments"),
-      where("organizationId", "==", payload.organizationId)
+      where("organizationId", "==", cleanPayload.organizationId)
     )
   );
 
   const touchedClasses = new Set(
-    payload.assignments.map((item) => item.classCode)
+    cleanPayload.assignments.map((item) => item.classCode)
   );
 
   const batch = writeBatch(db);
@@ -160,12 +181,12 @@ export async function importAcademicData(payload: {
     }
   }
 
-  for (const item of payload.assignments) {
+  for (const item of cleanPayload.assignments) {
     const teacherUid =
       item.teacherUid || resolveTeacherUid(item.teacherName);
 
     const id = safeId(
-      payload.organizationId +
+      cleanPayload.organizationId +
       "_" +
       item.classCode +
       "_" +
@@ -177,7 +198,7 @@ export async function importAcademicData(payload: {
     batch.set(
       doc(db, "teacherAssignments", id),
       {
-        organizationId: payload.organizationId,
+        organizationId: cleanPayload.organizationId,
         ...item,
         ...(teacherUid ? { teacherUid } : {}),
         importedAt: serverTimestamp(),
@@ -206,7 +227,7 @@ export async function importAcademicData(payload: {
         access.teacherUid + "__" + access.classCode
       ),
       {
-        organizationId: payload.organizationId,
+        organizationId: cleanPayload.organizationId,
         teacherUid: access.teacherUid,
         classCode: access.classCode,
         subjectCodes: [...access.subjectCodes],
@@ -217,9 +238,9 @@ export async function importAcademicData(payload: {
     );
   }
 
-  for (const item of payload.schedules || []) {
+  for (const item of cleanPayload.schedules || []) {
     const id = safeId(
-      payload.organizationId +
+      cleanPayload.organizationId +
       "_" +
       item.dayOfWeek +
       "_" +
@@ -233,7 +254,7 @@ export async function importAcademicData(payload: {
     batch.set(
       doc(db, "schedules", id),
       {
-        organizationId: payload.organizationId,
+        organizationId: cleanPayload.organizationId,
         ...item,
         importedAt: serverTimestamp(),
       },
@@ -244,8 +265,8 @@ export async function importAcademicData(payload: {
   await batch.commit();
 
   return {
-    assignments: payload.assignments.length,
-    schedules: payload.schedules?.length || 0,
+    assignments: cleanPayload.assignments.length,
+    schedules: cleanPayload.schedules?.length || 0,
     linkedTeachers: [...accessMap.values()].length,
   };
 }
