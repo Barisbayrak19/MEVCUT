@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useAuth } from "./context/AuthContext";
 import { signInWithEmailAndPassword } from "./firebase/auth";
 import { importEOkulData } from "./firebase/school";
@@ -21,7 +21,7 @@ function LoginView() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const submit = async (event: React.FormEvent) => {
+  const submit = async (event: FormEvent) => {
     event.preventDefault();
     setError("");
     setBusy(true);
