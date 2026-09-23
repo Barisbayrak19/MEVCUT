@@ -180,6 +180,18 @@ export async function saveAttendance(
       className,
       date,
       records,
+      reviewStatus: "submitted",
+      subjectCode: "legacy",
+      subjectName: "Günlük Yoklama",
+      period: 0,
+      lessonKey: attendanceDocId(
+        organizationId,
+        date,
+        classCode,
+        "legacy"
+      ),
+      teacherUid: updatedBy,
+      teacherName: "",
       updatedBy,
       updatedAt: serverTimestamp(),
     },
