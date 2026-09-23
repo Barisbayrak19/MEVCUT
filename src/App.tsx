@@ -1758,7 +1758,7 @@ export default function App() {
     new URLSearchParams(
       window.location.search
     ).get("eokulImport") === "1"
-      ? "e-Okul Aktarım"
+      ? "Entegrasyon"
       : "Ana Sayfa";
 
   const [active, setActive] =
@@ -1811,7 +1811,7 @@ export default function App() {
           "Yoklama",
           "Geçmiş",
           "Dersler",
-          "e-Okul Aktarım",
+          "Entegrasyon",
           "Ayarlar",
         ];
 
