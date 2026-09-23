@@ -2,12 +2,15 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
+
     function signedIn() {
       return request.auth != null;
     }
 
     function currentUser() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid));
+      return get(
+        /databases/$(database)/documents/users/$(request.auth.uid)
+      );
     }
 
     function isAdmin() {
@@ -16,57 +19,158 @@ service cloud.firestore {
         && currentUser().data.active == true;
     }
 
-    function canManageSchool() {
+    function isTeacher() {
       return signedIn()
-        && currentUser().data.active == true
-        && (
-          currentUser().data.role == "admin"
-          || currentUser().data.role == "teacher"
-        );
+        && currentUser().data.role == "teacher"
+        && currentUser().data.active == true;
+    }
+
+    function canManageSchool() {
+      return isAdmin() || isTeacher();
     }
 
     function sameOrg(data) {
-      return canManageSchool() && data.organizationId == currentUser().data.organizationId;
+      return canManageSchool()
+        && data.organizationId ==
+           currentUser().data.organizationId;
     }
 
+    function adminSameOrg(data) {
+      return isAdmin()
+        && data.organizationId ==
+           currentUser().data.organizationId;
+    }
+
+
     match /users/{uid} {
-      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
-      allow create: if isAdmin()
+      allow read:
+        if signedIn()
+        && (
+          request.auth.uid == uid
+          || isAdmin()
+        );
+
+      allow create:
+        if isAdmin()
         || (
           signedIn()
           && request.auth.uid == uid
           && request.resource.data.role == "teacher"
           && request.resource.data.active == true
         );
-      allow update: if isAdmin()
+
+      allow update:
+        if isAdmin()
         || (
           signedIn()
           && request.auth.uid == uid
-          && request.resource.data.role == resource.data.role
-          && request.resource.data.organizationId == resource.data.organizationId
+          && request.resource.data.role ==
+             resource.data.role
+          && request.resource.data.organizationId ==
+             resource.data.organizationId
         );
-      allow delete: if isAdmin();
+
+      allow delete:
+        if isAdmin();
     }
+
 
     match /classes/{classId} {
-      allow read: if sameOrg(resource.data);
-      allow create, update: if sameOrg(request.resource.data);
-      allow delete: if sameOrg(request.resource.data);
+      allow read:
+        if sameOrg(resource.data);
+
+      allow create, update:
+        if adminSameOrg(request.resource.data);
+
+      allow delete:
+        if adminSameOrg(resource.data);
     }
+
 
     match /students/{studentId} {
-      allow read: if sameOrg(resource.data);
-      allow create, update: if isAdmin() && sameOrg(request.resource.data);
-      allow delete: if isAdmin() && sameOrg(resource.data);
+      allow read:
+        if sameOrg(resource.data);
+
+      allow create, update:
+        if adminSameOrg(request.resource.data);
+
+      allow delete:
+        if adminSameOrg(resource.data);
     }
+
+
+    match /teacherAssignments/{assignmentId} {
+      allow read:
+        if sameOrg(resource.data);
+
+      allow create, update:
+        if adminSameOrg(request.resource.data);
+
+      allow delete:
+        if adminSameOrg(resource.data);
+    }
+
+
+    match /schedules/{scheduleId} {
+      allow read:
+        if sameOrg(resource.data);
+
+      allow create, update:
+        if adminSameOrg(request.resource.data);
+
+      allow delete:
+        if adminSameOrg(resource.data);
+    }
+
 
     match /attendance/{attendanceId} {
-      allow read: if sameOrg(resource.data);
-      allow create, update: if sameOrg(request.resource.data);
-      allow delete: if isAdmin() && sameOrg(resource.data);
+      allow get, list:
+        if sameOrg(resource.data);
+
+      allow create:
+        if sameOrg(request.resource.data)
+        && request.resource.data.reviewStatus != "approved";
+
+      allow update:
+        if (
+          adminSameOrg(request.resource.data)
+        )
+        || (
+          sameOrg(request.resource.data)
+          && resource.data.reviewStatus != "approved"
+          && request.resource.data.reviewStatus != "approved"
+        );
+
+      allow delete:
+        if adminSameOrg(resource.data);
     }
 
-    match / {document=**} {
+
+    match /attendanceLogs/{logId} {
+      allow read:
+        if sameOrg(resource.data);
+
+      allow create:
+        if sameOrg(request.resource.data);
+
+      allow update, delete:
+        if adminSameOrg(resource.data);
+    }
+
+
+    match /attendanceReviews/{reviewId} {
+      allow read:
+        if sameOrg(resource.data);
+
+      allow create:
+        if adminSameOrg(request.resource.data);
+
+      allow update, delete:
+        if adminSameOrg(resource.data);
+    }
+
+
+    match /{document=**} {
       allow read, write: if false;
     }
   }
