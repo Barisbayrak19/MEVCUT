@@ -230,6 +230,23 @@ export async function reviewLessonAttendance(
     batch.set(
       doc(
         db,
+        "eokulQueue",
+        safeId(attendanceId)
+      ),
+      {
+        organizationId,
+        attendanceId,
+        status: "pending",
+        attempts: 0,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
+
+    batch.set(
+      doc(
+        db,
         "attendanceLogs",
         safeId(attendanceId + "__approved__" + Date.now())
       ),
