@@ -79,14 +79,35 @@ async function getBridgeStatus() {
 }
 
 async function runMain(tabId, func, args = []) {
-  const result = await chrome.scripting.executeScript({
-    target: { tabId, frameIds: [0] },
-    world: "MAIN",
-    func,
-    args,
-  });
+  let lastError = null;
 
-  return result?.[0]?.result;
+  for (let attempt = 0; attempt < 12; attempt++) {
+    try {
+      const result = await chrome.scripting.executeScript({
+        target: { tabId, frameIds: [0] },
+        world: "MAIN",
+        func,
+        args,
+      });
+
+      return result?.[0]?.result;
+    } catch (error) {
+      lastError = error;
+
+      if (attempt === 11) {
+        break;
+      }
+
+      await new Promise((resolve) =>
+        setTimeout(resolve, 750)
+      );
+    }
+  }
+
+  throw new Error(
+    "e-Okul sayfasında işlem başlatılamadı: " +
+      String(lastError?.message || lastError)
+  );
 }
 
 async function extractStudents() {
