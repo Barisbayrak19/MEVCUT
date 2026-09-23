@@ -25,6 +25,12 @@ service cloud.firestore {
         && currentUser().data.active == true;
     }
 
+    function isParent() {
+      return signedIn()
+        && currentUser().data.role == "parent"
+        && currentUser().data.active == true;
+    }
+
     function canManageSchool() {
       return isAdmin() || isTeacher();
     }
@@ -39,6 +45,20 @@ service cloud.firestore {
       return isAdmin()
         && data.organizationId ==
            currentUser().data.organizationId;
+    }
+
+    function isParentOfStudent(studentId) {
+      return isParent()
+        && exists(
+          /databases/$(database)/documents/parentStudents/$(request.auth.uid + "_" + studentId)
+        )
+        && get(
+          /databases/$(database)/documents/parentStudents/$(request.auth.uid + "_" + studentId)
+        ).data.organizationId ==
+           currentUser().data.organizationId
+        && get(
+          /databases/$(database)/documents/parentStudents/$(request.auth.uid + "_" + studentId)
+        ).data.active == true;
     }
 
 
@@ -89,13 +109,29 @@ service cloud.firestore {
 
     match /students/{studentId} {
       allow read:
-        if sameOrg(resource.data);
+        if sameOrg(resource.data)
+        || isParentOfStudent(studentId);
 
       allow create, update:
         if adminSameOrg(request.resource.data);
 
       allow delete:
         if adminSameOrg(resource.data);
+    }
+
+
+    match /parentStudents/{relationshipId} {
+      allow read:
+        if isAdmin()
+        || (
+          isParent()
+          && resource.data.parentUid == request.auth.uid
+        );
+
+      allow create, update, delete:
+        if adminSameOrg(
+          request.resource.data
+        );
     }
 
 
