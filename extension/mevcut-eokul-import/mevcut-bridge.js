@@ -1,5 +1,10 @@
 (() => {
-  if (location.origin !== "https://mevcut-33328.web.app") return;
+  const allowedOrigins = new Set([
+    "https://mevcut-33328.web.app",
+    "https://barisbayrak19.github.io",
+  ]);
+
+  if (!allowedOrigins.has(location.origin)) return;
 
   const sendResult = (detail) => {
     window.dispatchEvent(
