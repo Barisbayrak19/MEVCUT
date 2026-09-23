@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "MEVCUT e-Okul Bridge",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "MEVCUT Entegrasyon Merkezi ile e-Okul arasında arka plan köprüsü.",
   "permissions": [
     "tabs",
@@ -9,7 +9,8 @@
   ],
   "host_permissions": [
     "https://e-okul.meb.gov.tr/*",
-    "https://mevcut-33328.web.app/*"
+    "https://mevcut-33328.web.app/*",
+    "https://barisbayrak19.github.io/MEVCUT/*"
   ],
   "background": {
     "service_worker": "service-worker.js"
@@ -17,7 +18,8 @@
   "content_scripts": [
     {
       "matches": [
-        "https://mevcut-33328.web.app/*"
+        "https://mevcut-33328.web.app/*",
+        "https://barisbayrak19.github.io/MEVCUT/*"
       ],
       "js": [
         "mevcut-bridge.js"
