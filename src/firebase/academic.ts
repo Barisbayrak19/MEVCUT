@@ -20,11 +20,15 @@ export async function getTeacherAssignments(
   organizationId: string,
   teacherName?: string
 ): Promise<TeacherAssignment[]> {
+  const constraints = [
+    where("organizationId", "==", organizationId),
+    ...(teacherName
+      ? [where("teacherName", "==", teacherName)]
+      : []),
+  ];
+
   const snapshot = await getDocs(
-    query(
-      collection(db, "teacherAssignments"),
-      where("organizationId", "==", organizationId)
-    )
+    query(collection(db, "teacherAssignments"), ...constraints)
   );
 
   const wanted = teacherName ? normalize(teacherName) : "";
@@ -59,11 +63,15 @@ export async function getSchedule(
   dayOfWeek?: number,
   teacherName?: string
 ): Promise<ScheduleEntry[]> {
+  const constraints = [
+    where("organizationId", "==", organizationId),
+    ...(teacherName
+      ? [where("teacherName", "==", teacherName)]
+      : []),
+  ];
+
   const snapshot = await getDocs(
-    query(
-      collection(db, "schedules"),
-      where("organizationId", "==", organizationId)
-    )
+    query(collection(db, "schedules"), ...constraints)
   );
 
   const wanted = teacherName ? normalize(teacherName) : "";
