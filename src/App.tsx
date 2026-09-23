@@ -15,15 +15,22 @@ type ImportPayload = EOkulImportPayload & {
 };
 
 function EOkulTransferView() {
-  const { profile } = useAuth();
+  const { profile, loading: authLoading } = useAuth();
   const [status, setStatus] = useState("Chrome eklentisi bekleniyor.");
   const [summary, setSummary] = useState<{ classes: number; students: number } | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
+    if (authLoading) return;
+
     let cancelled = false;
 
     const processPayload = async (payload: ImportPayload) => {
+      if (!profile) {
+        setStatus("Kullanıcı profili bekleniyor.");
+        setError("MEVCUT kullanıcı profili yüklenemedi. Lütfen sayfayı yenileyip tekrar deneyin.");
+        return;
+      }
       if (!payload?.classes?.length && !payload?.students?.length) return;
       setError("");
       setStatus("e-Okul verileri Firestore'a aktarılıyor...");
@@ -46,7 +53,12 @@ function EOkulTransferView() {
       } catch (err) {
         if (cancelled) return;
         setStatus("Aktarım başarısız.");
-        setError(String((err as Error)?.message || err));
+        const e = err as { code?: string; name?: string; message?: string };
+        setError(
+          [e?.code, e?.name, e?.message || String(err)]
+            .filter(Boolean)
+            .join(" — ")
+        );
       }
     };
 
@@ -70,7 +82,7 @@ function EOkulTransferView() {
       cancelled = true;
       window.removeEventListener("mevcut-eokul-import", handler);
     };
-  }, [profile?.organizationId]);
+  }, [authLoading, profile?.organizationId]);
 
   return (
     <section className="panel">
@@ -90,7 +102,11 @@ function EOkulTransferView() {
 }
 
 export default function App() {
-  const [active, setActive] = useState("Ana Sayfa");
+  const [active, setActive] = useState(() =>
+    new URLSearchParams(window.location.search).get("eokulImport") === "1"
+      ? "e-Okul Aktarım"
+      : "Ana Sayfa"
+  );
   return (
     <div className="app-shell">
       <aside className="sidebar">
