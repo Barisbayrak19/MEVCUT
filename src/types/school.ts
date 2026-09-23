@@ -1,3 +1,5 @@
+import type { ScheduleEntry, TeacherAssignment } from "./academic";
+
 export interface EOkulClassImport {
   code: string;
   name: string;
@@ -18,4 +20,6 @@ export interface EOkulImportPayload {
   importedAt: string;
   classes: EOkulClassImport[];
   students: EOkulStudentImport[];
+  assignments?: Omit<TeacherAssignment, "id" | "organizationId">[];
+  schedules?: Omit<ScheduleEntry, "id" | "organizationId">[];
 }
