@@ -21,11 +21,19 @@ import {
   saveLessonAttendance,
 } from "./firebase/attendance";
 import type {
+  AttendanceRuleViolation,
   LessonAttendance,
   LessonAttendanceRecord,
   ScheduleEntry,
   TeacherAssignment,
 } from "./types/academic";
+import { evaluateAttendanceRules } from "./rules/attendance";
+import { getCurrentLesson } from "./utils/lesson";
+import {
+  getEOkulQueue,
+  getLessonAttendanceById,
+  updateEOkulQueue,
+} from "./firebase/integration";
 import type { EOkulImportPayload } from "./types/school";
 
 const attendanceLabels: Record<AttendanceStatus, string> = {
@@ -144,19 +152,22 @@ function AttendanceView() {
   const [assignments, setAssignments] = useState<TeacherAssignment[]>([]);
   const [schedule, setSchedule] = useState<ScheduleEntry[]>([]);
   const [students, setStudents] = useState<SchoolStudent[]>([]);
+  const [lessonRecords, setLessonRecords] = useState<LessonAttendance[]>([]);
   const [selectedClass, setSelectedClass] = useState("");
   const [selectedLessonId, setSelectedLessonId] = useState("");
+  const [selectionMode, setSelectionMode] = useState<"auto" | "manual">("auto");
   const [date, setDate] = useState(todayLocal());
+  const [now, setNow] = useState(new Date());
   const [statuses, setStatuses] =
     useState<Record<string, LessonAttendanceRecord["status"]>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [ruleWarnings, setRuleWarnings] = useState<AttendanceRuleViolation[]>([]);
 
-  const teacherName = profile?.role === "teacher"
-    ? profile.displayName
-    : undefined;
+  const teacherName =
+    profile?.role === "teacher" ? profile.displayName : undefined;
 
   const visibleClasses = useMemo(() => {
     if (profile?.role !== "teacher" || !assignments.length) {
@@ -170,12 +181,22 @@ function AttendanceView() {
   const selectedLesson =
     schedule.find((item) => item.id === selectedLessonId) || null;
 
+  const currentLesson =
+    date === todayLocal()
+      ? getCurrentLesson(schedule, now)
+      : null;
+
   const selectedClassName =
     visibleClasses.find((item) => item.code === selectedClass)?.name || "";
 
   const subjectOptions = assignments.filter(
     (item) => item.classCode === selectedClass
   );
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if (!profile?.organizationId) return;
@@ -219,10 +240,7 @@ function AttendanceView() {
         );
       } catch (err) {
         if (!cancelled) {
-          setError(
-            (err as Error)?.message ||
-              String(err)
-          );
+          setError((err as Error)?.message || String(err));
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -251,21 +269,30 @@ function AttendanceView() {
     )
       .then((items) => {
         if (cancelled) return;
+
         setSchedule(items);
+        setSelectionMode("auto");
+
+        const autoLesson =
+          date === todayLocal()
+            ? getCurrentLesson(items, new Date())
+            : null;
+
         setSelectedLessonId(
-          (current) =>
-            items.some((item) => item.id === current)
-              ? current
-              : items[0]?.id || ""
+          autoLesson?.id ||
+            items[0]?.id ||
+            ""
         );
+
+        if (autoLesson) {
+          setSelectedClass(autoLesson.classCode);
+        }
       })
       .catch((err) => {
         if (!cancelled) {
           setSchedule([]);
-          setError(
-            (err as Error)?.message ||
-              String(err)
-          );
+          setSelectedLessonId("");
+          setError((err as Error)?.message || String(err));
         }
       });
 
@@ -273,6 +300,22 @@ function AttendanceView() {
       cancelled = true;
     };
   }, [date, profile?.organizationId, teacherName]);
+
+  useEffect(() => {
+    if (
+      selectionMode !== "auto" ||
+      date !== todayLocal() ||
+      !schedule.length
+    ) {
+      return;
+    }
+
+    const current = getCurrentLesson(schedule, now);
+    if (current) {
+      setSelectedLessonId(current.id);
+      setSelectedClass(current.classCode);
+    }
+  }, [date, now, schedule, selectionMode]);
 
   useEffect(() => {
     if (!profile?.organizationId || !selectedClass || !date) {
@@ -285,8 +328,12 @@ function AttendanceView() {
       setLoading(true);
       setError("");
       setMessage("");
+      setRuleWarnings([]);
 
       try {
+        const teacherUid =
+          profile.role === "teacher" ? user?.uid : undefined;
+
         const [studentItems, lessonItems, legacy] =
           await Promise.all([
             getClassStudents(
@@ -295,7 +342,8 @@ function AttendanceView() {
             ),
             getLessonAttendances(
               profile.organizationId,
-              date
+              date,
+              teacherUid
             ),
             getAttendance(
               profile.organizationId,
@@ -307,24 +355,24 @@ function AttendanceView() {
         if (cancelled) return;
 
         setStudents(studentItems);
+        setLessonRecords(lessonItems);
 
-        const existingLesson =
-          lessonItems.find((item) => {
-            if (selectedLesson) {
-              return (
-                item.classCode === selectedLesson.classCode &&
-                item.period === selectedLesson.period &&
-                item.subjectCode === selectedLesson.subjectCode &&
-                item.teacherUid === user?.uid
-              );
-            }
-
+        const existingLesson = lessonItems.find((item) => {
+          if (selectedLesson) {
             return (
-              item.classCode === selectedClass &&
-              item.period === 0 &&
+              item.classCode === selectedLesson.classCode &&
+              item.period === selectedLesson.period &&
+              item.subjectCode === selectedLesson.subjectCode &&
               item.teacherUid === user?.uid
             );
-          });
+          }
+
+          return (
+            item.classCode === selectedClass &&
+            item.period === 0 &&
+            item.teacherUid === user?.uid
+          );
+        });
 
         const existing =
           existingLesson?.records?.length
@@ -346,12 +394,10 @@ function AttendanceView() {
         });
 
         setStatuses(next);
+        setRuleWarnings(existingLesson?.ruleViolations || []);
       } catch (err) {
         if (!cancelled) {
-          setError(
-            (err as Error)?.message ||
-              String(err)
-          );
+          setError((err as Error)?.message || String(err));
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -366,8 +412,10 @@ function AttendanceView() {
   }, [
     date,
     profile?.organizationId,
+    profile?.role,
     selectedClass,
     selectedLessonId,
+    user?.uid,
   ]);
 
   const setStatus = (
@@ -392,6 +440,7 @@ function AttendanceView() {
     });
 
     setStatuses(next);
+    setRuleWarnings([]);
     setMessage("");
   };
 
@@ -399,8 +448,7 @@ function AttendanceView() {
     if (!profile?.organizationId || !user?.uid) return;
     if (!selectedClass || !students.length) return;
 
-    const assignment =
-      subjectOptions[0] || null;
+    const assignment = subjectOptions[0] || null;
 
     const subjectCode =
       selectedLesson?.subjectCode ||
@@ -419,11 +467,32 @@ function AttendanceView() {
         "unknown",
     }));
 
+    const previousLesson =
+      selectedLesson && selectedLesson.period > 0
+        ? lessonRecords
+            .filter(
+              (item) =>
+                item.classCode ===
+                  (selectedLesson.classCode || selectedClass) &&
+                item.teacherUid === user.uid &&
+                item.period > 0 &&
+                item.period < selectedLesson.period
+            )
+            .sort((a, b) => b.period - a.period)[0]
+        : undefined;
+
+    const violations = evaluateAttendanceRules({
+      currentRecords: records,
+      previousRecords: previousLesson?.records,
+    });
+
+    setRuleWarnings(violations);
+
     if (records.some((item) => item.status === "unknown")) {
       setError(
         "Bilinmiyor durumundaki öğrenciler kaydedilebilir ancak yönetici incelemesi gerekir."
       );
-    } else {
+    } else if (!violations.length) {
       setError("");
     }
 
@@ -444,16 +513,41 @@ function AttendanceView() {
         teacherName: profile.displayName,
         period: selectedLesson?.period || 0,
         records,
+        ruleViolations: violations,
       });
 
+      setLessonRecords((current) => [
+        ...current.filter((item) =>
+          item.id !== selectedLessonId
+        ),
+        {
+          id: selectedLessonId || "local",
+          organizationId: profile.organizationId,
+          date,
+          classCode: selectedLesson?.classCode || selectedClass,
+          className:
+            selectedLesson?.className ||
+            selectedClassName,
+          subjectCode,
+          subjectName,
+          teacherUid: user.uid,
+          teacherName: profile.displayName,
+          period: selectedLesson?.period || 0,
+          lessonKey: selectedLessonId || "local",
+          records,
+          reviewStatus: "submitted",
+          updatedBy: user.uid,
+          ruleViolations: violations,
+        },
+      ]);
+
       setMessage(
-        "Yoklama kaydedildi ve yönetici incelemesine gönderildi."
+        violations.length
+          ? "Yoklama kaydedildi. Kural uyarıları yönetici incelemesinde görülebilir."
+          : "Yoklama kaydedildi ve yönetici incelemesine gönderildi."
       );
     } catch (err) {
-      setError(
-        (err as Error)?.message ||
-          String(err)
-      );
+      setError((err as Error)?.message || String(err));
     } finally {
       setSaving(false);
     }
@@ -462,9 +556,7 @@ function AttendanceView() {
   const counts = students.reduce(
     (acc, student) => {
       const status =
-        statuses[student.studentNo] ||
-        "unknown";
-
+        statuses[student.studentNo] || "unknown";
       acc[status] += 1;
       return acc;
     },
@@ -486,31 +578,27 @@ function AttendanceView() {
         <div>
           <h3>Yoklama</h3>
           <p>
-            Ders programı aktarılmışsa bugünkü dersler
-            otomatik gelir. Aktarılmamışsa sınıfı
-            elle seçebilirsiniz.
+            Ders programı aktarılmışsa mevcut ders otomatik seçilir.
+            Program yoksa sınıfı ve dersi elle seçebilirsiniz.
           </p>
         </div>
 
         <div className="attendance-actions">
           <select
             value={selectedClass}
-            onChange={(e) =>
-              setSelectedClass(e.target.value)
-            }
+            onChange={(e) => {
+              setSelectedClass(e.target.value);
+              setSelectionMode("manual");
+              setSelectedLessonId("");
+            }}
             disabled={!visibleClasses.length}
           >
             {!visibleClasses.length && (
-              <option value="">
-                Sınıf bulunamadı
-              </option>
+              <option value="">Sınıf bulunamadı</option>
             )}
 
             {visibleClasses.map((item) => (
-              <option
-                key={item.code}
-                value={item.code}
-              >
+              <option key={item.code} value={item.code}>
                 {item.name}
               </option>
             ))}
@@ -519,43 +607,50 @@ function AttendanceView() {
           <input
             type="date"
             value={date}
-            onChange={(e) =>
-              setDate(e.target.value)
-            }
+            onChange={(e) => {
+              setDate(e.target.value);
+              setSelectionMode("auto");
+            }}
           />
         </div>
       </div>
 
       {schedule.length > 0 && (
         <div className="lesson-strip">
-          {schedule.map((item) => (
-            <button
-              key={item.id}
-              className={
-                selectedLessonId === item.id
-                  ? "lesson-card active"
-                  : "lesson-card"
-              }
-              onClick={() => {
-                setSelectedLessonId(item.id);
-                setSelectedClass(item.classCode);
-              }}
-            >
-              <strong>
-                {item.period}. Ders
-              </strong>
-              <span>{item.className}</span>
-              <small>{item.subjectName}</small>
-              {item.startTime && (
-                <small>
-                  {item.startTime}
-                  {item.endTime
-                    ? " - " + item.endTime
-                    : ""}
-                </small>
-              )}
-            </button>
-          ))}
+          {schedule.map((item) => {
+            const isCurrent = currentLesson?.id === item.id;
+
+            return (
+              <button
+                key={item.id}
+                className={
+                  selectedLessonId === item.id
+                    ? "lesson-card active"
+                    : "lesson-card"
+                }
+                onClick={() => {
+                  setSelectionMode("manual");
+                  setSelectedLessonId(item.id);
+                  setSelectedClass(item.classCode);
+                }}
+              >
+                <strong>
+                  {item.period}. Ders
+                  {isCurrent ? " · ŞU AN" : ""}
+                </strong>
+                <span>{item.className}</span>
+                <small>{item.subjectName}</small>
+                {item.startTime && (
+                  <small>
+                    {item.startTime}
+                    {item.endTime
+                      ? " - " + item.endTime
+                      : ""}
+                  </small>
+                )}
+              </button>
+            );
+          })}
         </div>
       )}
 
@@ -563,9 +658,8 @@ function AttendanceView() {
         <div className="info-box">
           <strong>Ders programı henüz aktarılmamış.</strong>
           <span>
-            IOK09002/IOK09009 açıldığında program
-            aktarımı bu ekrandaki otomatik ders
-            seçiminde kullanılacak.
+            MEB program ekranı açıldığında program aktarımı burada
+            otomatik ders seçimi için kullanılacak.
           </span>
         </div>
       )}
@@ -601,6 +695,22 @@ function AttendanceView() {
         </button>
       </div>
 
+      {ruleWarnings.length > 0 && (
+        <div className="rule-warning">
+          <strong>{ruleWarnings.length} kural uyarısı</strong>
+          <div>
+            {ruleWarnings.slice(0, 6).map((warning, index) => (
+              <div key={warning.ruleId + "-" + warning.studentNo + "-" + index}>
+                Öğrenci {warning.studentNo}: {warning.message}
+              </div>
+            ))}
+            {ruleWarnings.length > 6 && (
+              <div>+ {ruleWarnings.length - 6} uyarı daha</div>
+            )}
+          </div>
+        </div>
+      )}
+
       {error && (
         <div className="error-box attendance-error">
           {error}
@@ -626,8 +736,7 @@ function AttendanceView() {
           <tbody>
             {students.map((student) => {
               const status =
-                statuses[student.studentNo] ||
-                "unknown";
+                statuses[student.studentNo] || "unknown";
 
               return (
                 <tr key={student.id}>
@@ -646,10 +755,8 @@ function AttendanceView() {
                           key={item}
                           className={
                             status === item
-                              ? "attendance-status active " +
-                                item
-                              : "attendance-status " +
-                                item
+                              ? "attendance-status active " + item
+                              : "attendance-status " + item
                           }
                           onClick={() =>
                             setStatus(
@@ -669,10 +776,7 @@ function AttendanceView() {
 
             {!students.length && !loading && (
               <tr>
-                <td
-                  colSpan={3}
-                  className="table-empty"
-                >
+                <td colSpan={3} className="table-empty">
                   Bu sınıfta öğrenci bulunamadı.
                 </td>
               </tr>
@@ -684,7 +788,9 @@ function AttendanceView() {
       <div className="attendance-footer">
         <span>
           {students.length
-            ? "Değişiklikleri kaydetmeye hazır."
+            ? selectionMode === "auto" && currentLesson
+              ? "Mevcut ders otomatik seçildi."
+              : "Değişiklikleri kaydetmeye hazır."
             : "Önce bir sınıf seçin."}
         </span>
 
@@ -693,9 +799,7 @@ function AttendanceView() {
           onClick={save}
           disabled={saving || !students.length}
         >
-          {saving
-            ? "Kaydediliyor..."
-            : "Yoklamayı Kaydet"}
+          {saving ? "Kaydediliyor..." : "Yoklamayı Kaydet"}
         </button>
       </div>
     </section>
@@ -715,8 +819,11 @@ function DashboardView({
   useEffect(() => {
     if (!profile?.organizationId) return;
 
-    getLessonAttendances(profile.organizationId)
-      .then((items) => setRecords(items))
+    getLessonAttendances(
+      profile.organizationId,
+      undefined,
+      profile.role === "teacher" ? profile.uid : undefined
+    ).then((items) => setRecords(items))
       .finally(() => setLoading(false));
   }, [profile?.organizationId]);
 
@@ -741,7 +848,8 @@ function DashboardView({
       item.reviewStatus === "needs_review" ||
       item.records.some(
         (record) => record.status === "unknown"
-      )
+      ) ||
+      Boolean(item.ruleViolations?.length)
   ).length;
 
   const unknown = todayRecords.reduce(
@@ -1036,7 +1144,8 @@ function HistoryView() {
 
     getLessonAttendances(
       profile.organizationId,
-      date
+      date,
+      profile.role === "teacher" ? profile.uid : undefined
     ).then(setRecords);
   }, [date, profile?.organizationId]);
 
@@ -1158,7 +1267,9 @@ function HistoryView() {
               </div>
 
               <span className="status-badge">
-                {item.reviewStatus === "approved"
+                {item.ruleViolations?.length
+                  ? String(item.ruleViolations.length) + " kural uyarısı"
+                  : item.reviewStatus === "approved"
                   ? "Onaylandı"
                   : item.reviewStatus ===
                     "needs_review"
@@ -1173,292 +1284,382 @@ function HistoryView() {
   );
 }
 
-function EOkulTransferView() {
-  const {
-    profile,
-    loading: authLoading,
-    profileError,
-  } = useAuth();
-
-  const [status, setStatus] =
-    useState("Chrome eklentisi bekleniyor.");
-  const [summary, setSummary] = useState<{
-    classes: number;
-    students: number;
-    assignments: number;
-    schedules: number;
-  } | null>(null);
+function IntegrationCenterView() {
+  const { profile, loading: authLoading, profileError } = useAuth();
+  const [queue, setQueue] = useState<
+    Array<{
+      id: string;
+      attendanceId: string;
+      status: "pending" | "processing" | "completed" | "failed";
+      attempts: number;
+      lastError?: string;
+      attendance?: LessonAttendance | null;
+    }>
+  >([]);
+  const [status, setStatus] = useState("Hazır.");
   const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
-    if (authLoading) return;
+  const loadQueue = async () => {
+    if (!profile?.organizationId || profile.role !== "admin") return;
 
-    let cancelled = false;
-
-    const processPayload = async (
-      payload: ImportPayload
-    ) => {
-      if (!profile) {
-        setStatus(
-          "Kullanıcı profili kullanılamıyor."
-        );
-        setError(
-          profileError ||
-            "MEVCUT kullanıcı profili yüklenemedi."
-        );
-        return;
-      }
-
-      if (
-        !payload?.classes?.length &&
-        !payload?.students?.length &&
-        !payload?.assignments?.length &&
-        !payload?.schedules?.length
-      ) {
-        return;
-      }
-
-      setError("");
-      setStatus(
-        "e-Okul verileri Firestore'a aktarılıyor..."
-      );
-
-      try {
-        const schoolResult =
-          await importEOkulData({
-            organizationId:
-              profile.organizationId,
-            periodCode:
-              payload.periodCode,
-            institutionCode:
-              payload.institutionCode,
-            importedAt:
-              payload.importedAt,
-            classes:
-              payload.classes || [],
-            students:
-              payload.students || [],
-          });
-
-        const academicResult =
-          await importAcademicData({
-            organizationId:
-              profile.organizationId,
-            assignments:
-              payload.assignments || [],
-            schedules:
-              payload.schedules || [],
-          });
-
-        if (cancelled) return;
-
-        setSummary({
-          classes:
-            schoolResult.classCount,
-          students:
-            schoolResult.studentCount,
-          assignments:
-            academicResult.assignments,
-          schedules:
-            academicResult.schedules,
-        });
-
-        setStatus(
-          "Aktarım tamamlandı."
-        );
-
-        if (payload.errors?.length) {
-          setError(
-            payload.errors
-              .map(
-                (x) =>
-                  x.className +
-                  ": " +
-                  x.message
-              )
-              .join("\n")
-          );
-        }
-
-        sessionStorage.removeItem(
-          "mevcut-eokul-import"
-        );
-      } catch (err) {
-        if (cancelled) return;
-
-        setStatus(
-          "Aktarım başarısız."
-        );
-
-        const e = err as {
-          code?: string;
-          name?: string;
-          message?: string;
-        };
-
-        setError(
-          [
-            e?.code,
-            e?.name,
-            e?.message ||
-              String(err),
-          ]
-            .filter(Boolean)
-            .join(" — ")
-        );
-      }
-    };
-
-    const fromStorage =
-      sessionStorage.getItem(
-        "mevcut-eokul-import"
-      );
-
-    if (fromStorage) {
-      try {
-        void processPayload(
-          JSON.parse(fromStorage)
-        );
-      } catch {
-        sessionStorage.removeItem(
-          "mevcut-eokul-import"
-        );
-        setStatus(
-          "Aktarım verisi okunamadı."
-        );
-        setError(
-          "MEVCUT'a gönderilen e-Okul verisi geçersiz."
-        );
-      }
-    }
-
-    const academicEncoded =
-      new URLSearchParams(window.location.search)
-        .get("eokulAcademic");
-
-    if (academicEncoded) {
-      try {
-        const binary = atob(academicEncoded);
-        const bytes = Uint8Array.from(
-          binary,
-          (char) => char.charCodeAt(0)
-        );
-        const decoded = new TextDecoder().decode(bytes);
-        const payload =
-          JSON.parse(decoded) as ImportPayload;
-
-        void processPayload(payload);
-
-        const url = new URL(
-          window.location.href
-        );
-        url.searchParams.delete(
-          "eokulAcademic"
-        );
-        url.searchParams.delete(
-          "eokulImport"
-        );
-        window.history.replaceState(
-          {},
-          "",
-          url.toString()
-        );
-      } catch {
-        setStatus(
-          "Akademik aktarım verisi okunamadı."
-        );
-        setError(
-          "e-Okul'dan gelen ders-öğretmen verisi çözülemedi."
-        );
-      }
-    }
-
-    const handler = (event: Event) => {
-      const payload =
-        (
-          event as CustomEvent<ImportPayload>
-        ).detail;
-
-      if (payload) {
-        void processPayload(payload);
-      }
-    };
-
-    window.addEventListener(
-      "mevcut-eokul-import",
-      handler
+    const items = await getEOkulQueue(profile.organizationId);
+    const enriched = await Promise.all(
+      items
+        .filter((item) =>
+          item.status === "pending" ||
+          item.status === "processing" ||
+          item.status === "failed"
+        )
+        .map(async (item) => ({
+          ...item,
+          attendance: await getLessonAttendanceById(
+            profile.organizationId,
+            item.attendanceId
+          ),
+        }))
     );
 
-    return () => {
-      cancelled = true;
+    setQueue(enriched);
+  };
+
+  useEffect(() => {
+    if (authLoading || !profile?.organizationId) return;
+
+    if (profile.role !== "admin") {
+      setStatus(
+        "Bu alan yalnızca yöneticinin e-Okul işlemleri için kullanılır."
+      );
+      return;
+    }
+
+    void loadQueue();
+
+    const handler = async (event: Event) => {
+      const detail =
+        (event as CustomEvent).detail as
+          | {
+              requestId?: string;
+              action?: string;
+              ok?: boolean;
+              error?: string;
+              payload?: ImportPayload;
+            }
+          | undefined;
+
+      if (!detail) return;
+
+      setBusy(false);
+
+      if (!detail.ok) {
+        setError(detail.error || "e-Okul işlemi başarısız.");
+        setStatus("İşlem başarısız.");
+
+        if (detail.action === "SEND_ATTENDANCE" && detail.requestId) {
+          const queueItem = queue.find(
+            (item) => item.id === detail.requestId
+          );
+
+          if (queueItem) {
+            await updateEOkulQueue(
+              profile.organizationId,
+              queueItem.id,
+              "failed",
+              {
+                attempts: queueItem.attempts + 1,
+                lastError:
+                  detail.error ||
+                  "e-Okul işlemi başarısız.",
+              }
+            );
+
+            await loadQueue();
+          }
+        }
+
+        return;
+      }
+
+      try {
+        if (detail.action === "SYNC_STUDENTS" && detail.payload) {
+          const result = await importEOkulData({
+            organizationId: profile.organizationId,
+            periodCode: detail.payload.periodCode,
+            institutionCode: detail.payload.institutionCode,
+            importedAt: detail.payload.importedAt,
+            classes: detail.payload.classes || [],
+            students: detail.payload.students || [],
+          });
+
+          setStatus(
+            result.classCount +
+              " sınıf ve " +
+              result.studentCount +
+              " öğrenci MEVCUT'a aktarıldı."
+          );
+
+          if (detail.payload.errors?.length) {
+            setError(
+              detail.payload.errors
+                .map((item) => item.className + ": " + item.message)
+                .join("\n")
+            );
+          } else {
+            setError("");
+          }
+        }
+
+        if (detail.action === "SYNC_ACADEMIC" && detail.payload) {
+          const result = await importAcademicData({
+            organizationId: profile.organizationId,
+            assignments: detail.payload.assignments || [],
+            schedules: detail.payload.schedules || [],
+          });
+
+          setStatus(
+            result.assignments +
+              " ders-öğretmen eşleşmesi ve " +
+              result.schedules +
+              " program kaydı aktarıldı."
+          );
+          setError("");
+        }
+
+        if (detail.action === "SEND_ATTENDANCE") {
+          const queueItem = queue.find(
+            (item) => item.id === detail.requestId
+          );
+
+          if (queueItem) {
+            await updateEOkulQueue(
+              profile.organizationId,
+              queueItem.id,
+              "completed",
+              {
+                attempts: queueItem.attempts + 1,
+                lastError: "",
+              }
+            );
+            await loadQueue();
+          }
+
+          setStatus("Yoklama e-Okul'a başarıyla gönderildi.");
+          setError("");
+        }
+      } catch (err) {
+        setError((err as Error)?.message || String(err));
+        setStatus("MEVCUT tarafındaki aktarım başarısız.");
+      }
+    };
+
+    window.addEventListener("MEVCUT_EOKUL_RESULT", handler);
+
+    return () =>
       window.removeEventListener(
-        "mevcut-eokul-import",
+        "MEVCUT_EOKUL_RESULT",
         handler
       );
-    };
   }, [
     authLoading,
     profile?.organizationId,
+    profile?.role,
     profileError,
+    queue,
   ]);
 
+  const sendCommand = (
+    action: string,
+    payload: Record<string, unknown> = {},
+    requestId?: string
+  ) => {
+    setBusy(true);
+    setError("");
+    setStatus("e-Okul işlemi başlatılıyor...");
+
+    window.postMessage(
+      {
+        source: "MEVCUT",
+        type: "MEVCUT_EOKUL_COMMAND",
+        action,
+        requestId,
+        payload,
+      },
+      window.location.origin
+    );
+  };
+
+  const sendQueueItem = async (item: (typeof queue)[number]) => {
+    if (!item.attendance || !profile?.organizationId) return;
+
+    const unknown = item.attendance.records.some(
+      (record) => record.status === "unknown"
+    );
+
+    if (unknown) {
+      setError(
+        item.attendance.className +
+          " kaydında Bilinmiyor öğrenciler bulunduğu için e-Okul'a gönderilemez."
+      );
+      return;
+    }
+
+    await updateEOkulQueue(
+      profile.organizationId,
+      item.id,
+      "processing",
+      {
+        attempts: item.attempts + 1,
+        lastError: "",
+      }
+    );
+
+    await loadQueue();
+
+    sendCommand(
+      "SEND_ATTENDANCE",
+      {
+        queueId: item.id,
+        attendance: item.attendance,
+      },
+      item.id
+    );
+  };
+
+  const pending = queue.filter((item) => item.status === "pending");
+  const failed = queue.filter((item) => item.status === "failed");
+
+  if (profile?.role !== "admin") {
+    return (
+      <section className="panel">
+        <div className="panel-header">
+          <div>
+            <h3>Entegrasyon Merkezi</h3>
+            <p>{status}</p>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
   return (
-    <section className="panel">
+    <section className="panel integration-panel">
       <div className="panel-header">
         <div>
-          <h3>e-Okul Veri Aktarımı</h3>
+          <h3>Entegrasyon Merkezi</h3>
           <p>
-            Sınıf, öğrenci ve ders-öğretmen verilerini
-            e-Okul'dan MEVCUT'a al.
+            e-Okul işlemlerini MEVCUT içinden başlatın.
+            Chrome eklentisi arka planda köprü olarak çalışır.
           </p>
         </div>
-
         <span className="status-badge">
-          {status}
+          {busy ? "İşlem sürüyor" : "Hazır"}
         </span>
       </div>
 
-      <div className="empty-state">
-        <div className="empty-icon">↕</div>
+      <div className="integration-actions">
+        <article className="integration-card">
+          <strong>Sınıf + Öğrenci Senkronizasyonu</strong>
+          <p>
+            Açık e-Okul yoklama ekranından sınıf ve öğrenci verilerini alır.
+          </p>
+          <button
+            className="primary"
+            disabled={busy}
+            onClick={() => sendCommand("SYNC_STUDENTS")}
+          >
+            e-Okul'dan Verileri Al
+          </button>
+        </article>
 
-        <strong>
-          {summary
-            ? "Aktarım tamamlandı"
-            : "Chrome eklentisi ile veri al"}
-        </strong>
+        <article className="integration-card">
+          <strong>Ders + Öğretmen Senkronizasyonu</strong>
+          <p>
+            IOK09004 ekranında seçili sınıfın ders-öğretmen eşleşmesini alır.
+          </p>
+          <button
+            className="secondary"
+            disabled={busy}
+            onClick={() => sendCommand("SYNC_ACADEMIC")}
+          >
+            Akademik Veriyi Al
+          </button>
+        </article>
+      </div>
 
-        <p>
-          {summary
-            ? "e-Okul verileri Firestore'a kaydedildi."
-            : "Öğrenci Günlük Devamsızlık Girişi sayfasından öğrenci verilerini, IOK09004 Ders Öğretmenleri sayfasından seçili sınıfın ders-öğretmen eşleşmelerini aktarabilirsiniz."}
-        </p>
+      <div className="integration-summary">
+        <span>
+          Bekleyen <strong>{pending.length}</strong>
+        </span>
+        <span>
+          Hatalı <strong>{failed.length}</strong>
+        </span>
+      </div>
 
-        {summary && (
-          <div className="import-summary">
-            <strong>
-              {summary.classes}
-            </strong>{" "}
-            sınıf ·{" "}
-            <strong>
-              {summary.students}
-            </strong>{" "}
-            öğrenci ·{" "}
-            <strong>
-              {summary.assignments}
-            </strong>{" "}
-            ders-öğretmen eşleşmesi ·{" "}
-            <strong>
-              {summary.schedules}
-            </strong>{" "}
-            program kaydı
+      {status && <div className="success-box">{status}</div>}
+      {error && (
+        <pre className="import-error">
+          {error}
+        </pre>
+      )}
+
+      <div className="queue-list">
+        <div className="panel-header compact-header">
+          <div>
+            <h4>e-Okul Gönderim Kuyruğu</h4>
+            <p>Yönetici onayından geçen yoklamalar burada görünür.</p>
+          </div>
+          <button
+            className="secondary"
+            onClick={() => void loadQueue()}
+            disabled={busy}
+          >
+            Yenile
+          </button>
+        </div>
+
+        {!queue.length && (
+          <div className="empty-state compact">
+            <strong>Gönderilecek kayıt yok.</strong>
+            <p>
+              Onaylanan yoklamalar otomatik olarak bu kuyruğa düşer.
+            </p>
           </div>
         )}
 
-        {error && (
-          <pre className="import-error">
-            {error}
-          </pre>
-        )}
+        {queue.map((item) => (
+          <article className="queue-card" key={item.id}>
+            <div>
+              <strong>
+                {(item.attendance?.className || "Sınıf") +
+                  " · " +
+                  (item.attendance?.subjectName || "Ders")}
+              </strong>
+              <span>
+                {item.attendance?.period
+                  ? String(item.attendance.period) + ". ders · "
+                  : ""}
+                {item.attendance?.date || ""}
+              </span>
+              <small>
+                {item.status + " · " + item.attempts + " deneme"}
+              </small>
+            </div>
+
+            <button
+              className="primary"
+              disabled={
+                busy ||
+                item.status === "processing" ||
+                !item.attendance
+              }
+              onClick={() => void sendQueueItem(item)}
+            >
+              {item.status === "processing"
+                ? "Gönderiliyor..."
+                : "e-Okul'a Gönder"}
+            </button>
+          </article>
+        ))}
       </div>
     </section>
   );
@@ -1602,7 +1803,7 @@ export default function App() {
           "Gün Sonu",
           "Geçmiş",
           "Dersler",
-          "e-Okul Aktarım",
+          "Entegrasyon",
           "Ayarlar",
         ]
       : [
@@ -1624,8 +1825,8 @@ export default function App() {
     content = <HistoryView />;
   } else if (active === "Dersler") {
     content = <AcademicView />;
-  } else if (active === "e-Okul Aktarım") {
-    content = <EOkulTransferView />;
+  } else if (active === "Entegrasyon") {
+    content = <IntegrationCenterView />;
   } else if (active === "Ayarlar") {
     content = (
       <section className="panel">
