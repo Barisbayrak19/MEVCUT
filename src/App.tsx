@@ -807,6 +807,21 @@ function ReviewView() {
                   {" · "}
                   {raw.length} öğretmen yoklaması
                 </small>
+                <small>
+                  Ham kayıtlar:{" "}
+                  {raw.length
+                    ? raw.map((lesson) => {
+                        const record = lesson.records.find(
+                          (entry) => entry.studentNo === item.studentNo
+                        );
+                        return (
+                          (lesson.teacherName || "Öğretmen") +
+                          ": " +
+                          (record?.status || "unknown")
+                        );
+                      }).join(" · ")
+                    : "Henüz yoklama yok"}
+                </small>
                 <small>{item.explanation}</small>
                 {item.hasIntermediateAbsence && (
                   <small className="error-box">🚨 Ara Ders Devamsızlığı Tespit Edildi</small>
