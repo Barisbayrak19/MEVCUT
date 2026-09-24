@@ -78,7 +78,7 @@ export interface AttendanceAuditLog {
   newStatus: string;
   changedBy: string;
   changedAt?: unknown;
-  action: "status_change" | "admin_override" | "approved" | "needs_review";
+  action: "attendance_submitted" | "status_change" | "admin_override" | "approved" | "needs_review";
 }
 
 export interface EOkulQueueItem {
