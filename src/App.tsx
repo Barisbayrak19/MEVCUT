@@ -4,36 +4,46 @@ import { signInWithEmailAndPassword } from "./firebase/auth";
 import {
   getClassStudents,
   getSchoolClasses,
-  getAttendance,
   importEOkulData,
-  type AttendanceStatus,
   type SchoolClass,
   type SchoolStudent,
 } from "./firebase/school";
 import {
-  getSchedule,
   getTeacherAssignments,
   importAcademicData,
 } from "./firebase/academic";
 import {
   getLessonAttendances,
-  reviewLessonAttendance,
   saveLessonAttendance,
 } from "./firebase/attendance";
 import type {
   AttendanceRuleViolation,
   LessonAttendance,
   LessonAttendanceRecord,
-  ScheduleEntry,
   TeacherAssignment,
 } from "./types/academic";
 import { evaluateAttendanceRules } from "./rules/attendance";
-import { getCurrentLesson } from "./utils/lesson";
 import {
   getEOkulQueue,
   getLessonAttendanceById,
   updateEOkulQueue,
 } from "./firebase/integration";
+import {
+  approveDailyReport,
+  calculateAndSaveDailyAttendance,
+  getDailyAttendance,
+  getDailyReport,
+  overrideDailyAttendance,
+} from "./firebase/dailyAttendance";
+import {
+  getParentChildren,
+  getParentDailyAttendance,
+  getParentNotifications,
+} from "./firebase/parent";
+import type {
+  DailyAttendanceStudent,
+  DailySystemResult,
+} from "./types/dailyAttendance";
 import type { EOkulImportPayload } from "./types/school";
 
 const attendanceLabels: Record<AttendanceStatus, string> = {
@@ -147,387 +157,142 @@ function LoginView() {
 
 function AttendanceView() {
   const { user, profile } = useAuth();
-
   const [classes, setClasses] = useState<SchoolClass[]>([]);
-  const [assignments, setAssignments] = useState<TeacherAssignment[]>([]);
-  const [schedule, setSchedule] = useState<ScheduleEntry[]>([]);
   const [students, setStudents] = useState<SchoolStudent[]>([]);
-  const [lessonRecords, setLessonRecords] = useState<LessonAttendance[]>([]);
+  const [records, setRecords] = useState<LessonAttendance[]>([]);
   const [selectedClass, setSelectedClass] = useState("");
-  const [selectedLessonId, setSelectedLessonId] = useState("");
-  const [selectionMode, setSelectionMode] = useState<"auto" | "manual">("auto");
   const [date, setDate] = useState(todayLocal());
-  const [now, setNow] = useState(new Date());
   const [statuses, setStatuses] =
     useState<Record<string, LessonAttendanceRecord["status"]>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
-  const [ruleWarnings, setRuleWarnings] = useState<AttendanceRuleViolation[]>([]);
 
-  const teacherName =
-    profile?.role === "teacher" ? profile.displayName : undefined;
+  const load = async () => {
+    if (!profile?.organizationId || !user?.uid) return;
+    setLoading(true);
+    setError("");
 
-  const visibleClasses = useMemo(() => {
-    if (profile?.role !== "teacher" || !assignments.length) {
-      return classes;
-    }
-
-    const codes = new Set(assignments.map((item) => item.classCode));
-    return classes.filter((item) => codes.has(item.code));
-  }, [assignments, classes, profile?.role]);
-
-  const selectedLesson =
-    schedule.find((item) => item.id === selectedLessonId) || null;
-
-  const currentLesson =
-    date === todayLocal()
-      ? getCurrentLesson(schedule, now)
-      : null;
-
-  const selectedClassName =
-    visibleClasses.find((item) => item.code === selectedClass)?.name || "";
-
-  const subjectOptions = assignments.filter(
-    (item) => item.classCode === selectedClass
-  );
-
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(new Date()), 30_000);
-    return () => window.clearInterval(timer);
-  }, []);
-
-  useEffect(() => {
-    if (!profile?.organizationId) return;
-
-    let cancelled = false;
-
-    const load = async () => {
-      setLoading(true);
-      setError("");
-
-      try {
-        const [classItems, assignmentItems] = await Promise.all([
+    try {
+      const [classItems, studentItems, attendanceItems] =
+        await Promise.all([
           getSchoolClasses(profile.organizationId),
-          getTeacherAssignments(
+          selectedClass
+            ? getClassStudents(profile.organizationId, selectedClass)
+            : Promise.resolve([]),
+          getLessonAttendances(
             profile.organizationId,
-            teacherName
+            date,
+            profile.role === "teacher" ? user.uid : undefined
           ),
         ]);
 
-        if (cancelled) return;
-
-        setClasses(classItems);
-        setAssignments(assignmentItems);
-
-        const available =
-          profile.role === "teacher" && assignmentItems.length
-            ? classItems.filter((item) =>
-                assignmentItems.some(
-                  (assignment) =>
-                    assignment.classCode === item.code
-                )
-              )
-            : classItems;
-
-        setSelectedClass(
-          (current) =>
-            current ||
-            available[0]?.code ||
-            classItems[0]?.code ||
-            ""
-        );
-      } catch (err) {
-        if (!cancelled) {
-          setError((err as Error)?.message || String(err));
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
+      setClasses(classItems);
+      const activeClass = selectedClass || classItems[0]?.code || "";
+      if (!selectedClass && activeClass) {
+        setSelectedClass(activeClass);
       }
-    };
 
-    void load();
+      const activeStudents = selectedClass
+        ? studentItems
+        : activeClass
+          ? await getClassStudents(profile.organizationId, activeClass)
+          : [];
 
-    return () => {
-      cancelled = true;
-    };
-  }, [profile?.organizationId, profile?.role, teacherName]);
+      setStudents(activeStudents);
+      setRecords(attendanceItems);
 
-  useEffect(() => {
-    if (!profile?.organizationId || !date) return;
+      const classRecords = attendanceItems.filter(
+        (item) => item.classCode === activeClass
+      );
+      const latest = classRecords[classRecords.length - 1];
 
-    let cancelled = false;
-
-    const day = new Date(date + "T12:00:00").getDay();
-    const dayOfWeek = day === 0 ? 7 : day;
-
-    getSchedule(
-      profile.organizationId,
-      dayOfWeek,
-      teacherName
-    )
-      .then((items) => {
-        if (cancelled) return;
-
-        setSchedule(items);
-        setSelectionMode("auto");
-
-        const autoLesson =
-          date === todayLocal()
-            ? getCurrentLesson(items, new Date())
-            : null;
-
-        setSelectedLessonId(
-          autoLesson?.id ||
-            items[0]?.id ||
-            ""
-        );
-
-        if (autoLesson) {
-          setSelectedClass(autoLesson.classCode);
-        }
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setSchedule([]);
-          setSelectedLessonId("");
-          setError((err as Error)?.message || String(err));
-        }
+      const next: Record<string, LessonAttendanceRecord["status"]> = {};
+      activeStudents.forEach((student) => {
+        next[student.studentNo] = "present";
       });
 
-    return () => {
-      cancelled = true;
-    };
-  }, [date, profile?.organizationId, teacherName]);
+      latest?.records.forEach((record) => {
+        next[record.studentNo] = record.status;
+      });
+
+      setStatuses(next);
+    } catch (err) {
+      setError((err as Error)?.message || String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    if (
-      selectionMode !== "auto" ||
-      date !== todayLocal() ||
-      !schedule.length
-    ) {
-      return;
-    }
-
-    const current = getCurrentLesson(schedule, now);
-    if (current) {
-      setSelectedLessonId(current.id);
-      setSelectedClass(current.classCode);
-    }
-  }, [date, now, schedule, selectionMode]);
-
-  useEffect(() => {
-    if (!profile?.organizationId || !selectedClass || !date) {
-      return;
-    }
-
-    let cancelled = false;
-
-    const load = async () => {
-      setLoading(true);
-      setError("");
-      setMessage("");
-      setRuleWarnings([]);
-
-      try {
-        const teacherUid =
-          profile.role === "teacher" ? user?.uid : undefined;
-
-        const [studentItems, lessonItems, legacy] =
-          await Promise.all([
-            getClassStudents(
-              profile.organizationId,
-              selectedClass
-            ),
-            getLessonAttendances(
-              profile.organizationId,
-              date,
-              teacherUid
-            ),
-            getAttendance(
-              profile.organizationId,
-              selectedClass,
-              date
-            ),
-          ]);
-
-        if (cancelled) return;
-
-        setStudents(studentItems);
-        setLessonRecords(lessonItems);
-
-        const existingLesson = lessonItems.find((item) => {
-          if (selectedLesson) {
-            return (
-              item.classCode === selectedLesson.classCode &&
-              item.period === selectedLesson.period &&
-              item.subjectCode === selectedLesson.subjectCode &&
-              item.teacherUid === user?.uid
-            );
-          }
-
-          return (
-            item.classCode === selectedClass &&
-            item.period === 0 &&
-            item.teacherUid === user?.uid
-          );
-        });
-
-        const existing =
-          existingLesson?.records?.length
-            ? existingLesson.records
-            : legacy;
-
-        const next: Record<
-          string,
-          LessonAttendanceRecord["status"]
-        > = {};
-
-        studentItems.forEach((student) => {
-          next[student.studentNo] = "present";
-        });
-
-        existing.forEach((record) => {
-          next[record.studentNo] =
-            record.status as LessonAttendanceRecord["status"];
-        });
-
-        setStatuses(next);
-        setRuleWarnings(existingLesson?.ruleViolations || []);
-      } catch (err) {
-        if (!cancelled) {
-          setError((err as Error)?.message || String(err));
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-
     void load();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    date,
-    profile?.organizationId,
-    profile?.role,
-    selectedClass,
-    selectedLessonId,
-    user?.uid,
-  ]);
+  }, [profile?.organizationId, profile?.role, user?.uid, selectedClass, date]);
 
   const setStatus = (
     studentNo: string,
     status: LessonAttendanceRecord["status"]
   ) => {
-    setStatuses((current) => ({
-      ...current,
-      [studentNo]: status,
-    }));
-    setMessage("");
-  };
-
-  const markAllPresent = () => {
-    const next: Record<
-      string,
-      LessonAttendanceRecord["status"]
-    > = {};
-
-    students.forEach((student) => {
-      next[student.studentNo] = "present";
-    });
-
-    setStatuses(next);
-    setRuleWarnings([]);
+    setStatuses((current) => ({ ...current, [studentNo]: status }));
     setMessage("");
   };
 
   const save = async () => {
-    if (!profile?.organizationId || !user?.uid) return;
-    if (!selectedClass || !students.length) return;
+    if (!profile?.organizationId || !user?.uid || !selectedClass) return;
 
-    const assignment = subjectOptions[0] || null;
+    const className =
+      classes.find((item) => item.code === selectedClass)?.name || "";
 
-    const subjectCode =
-      selectedLesson?.subjectCode ||
-      assignment?.subjectCode ||
-      "manual";
+    const previous = records
+      .filter((item) => item.classCode === selectedClass)
+      .sort((a, b) => b.period - a.period)[0];
 
-    const subjectName =
-      selectedLesson?.subjectName ||
-      assignment?.subjectName ||
-      "Günlük Yoklama";
+    const previousMap = new Map(
+      (previous?.records || []).map((item) => [item.studentNo, item.status])
+    );
 
-    const records = students.map((student) => ({
+    const rows = students.map((student) => ({
       studentNo: student.studentNo,
-      status:
-        statuses[student.studentNo] ||
-        "unknown",
+      status: statuses[student.studentNo] || "unknown",
     }));
 
-    const previousLesson =
-      selectedLesson && selectedLesson.period > 0
-        ? lessonRecords
-            .filter(
-              (item) =>
-                item.classCode ===
-                  (selectedLesson.classCode || selectedClass) &&
-                item.teacherUid === user.uid &&
-                item.period > 0 &&
-                item.period < selectedLesson.period
-            )
-            .sort((a, b) => b.period - a.period)[0]
-        : undefined;
-
-    const violations = evaluateAttendanceRules({
-      currentRecords: records,
-      previousRecords: previousLesson?.records,
-    });
-
-    setRuleWarnings(violations);
-
-    if (records.some((item) => item.status === "unknown")) {
-      setError(
-        "Bilinmiyor durumundaki öğrenciler kaydedilebilir ancak yönetici incelemesi gerekir."
-      );
-    } else if (!violations.length) {
-      setError("");
-    }
+    const intermediateWarnings = rows.filter(
+      (row) =>
+        previousMap.get(row.studentNo) === "present" &&
+        row.status === "absent"
+    );
 
     setSaving(true);
+    setError("");
     setMessage("");
 
     try {
       await saveLessonAttendance({
         organizationId: profile.organizationId,
         date,
-        classCode: selectedLesson?.classCode || selectedClass,
-        className:
-          selectedLesson?.className ||
-          selectedClassName,
-        subjectCode,
-        subjectName,
+        classCode: selectedClass,
+        className,
+        subjectCode: "manual",
+        subjectName: "Günlük Yoklama",
         teacherUid: user.uid,
         teacherName: profile.displayName,
-        period: selectedLesson?.period || 0,
-        records,
-        ruleViolations: violations,
+        period: 0,
+        records: rows,
+        ruleViolations: intermediateWarnings.map((row) => ({
+          ruleId: "ARA_DERS_DEVAMSIZLIGI",
+          severity: "critical",
+          studentNo: row.studentNo,
+          message:
+            "Öğrenci önceki yoklamada Mevcut, bu yoklamada Yok olarak işaretlendi.",
+        })),
       });
 
-      const refreshed = await getLessonAttendances(
-        profile.organizationId,
-        date,
-        profile.role === "teacher" ? user.uid : undefined
-      );
-      setLessonRecords(refreshed);
-
       setMessage(
-        violations.length
-          ? "Yoklama kaydedildi. Kural uyarıları yönetici incelemesinde görülebilir."
+        intermediateWarnings.length
+          ? "Yoklama kaydedildi. Ara ders devamsızlığı uyarıları yöneticiye iletildi."
           : "Yoklama kaydedildi ve yönetici incelemesine gönderildi."
       );
+      await load();
     } catch (err) {
       setError((err as Error)?.message || String(err));
     } finally {
@@ -537,21 +302,11 @@ function AttendanceView() {
 
   const counts = students.reduce(
     (acc, student) => {
-      const status =
-        statuses[student.studentNo] || "unknown";
-      acc[status] += 1;
+      const status = statuses[student.studentNo] || "unknown";
+      acc[status] = (acc[status] || 0) + 1;
       return acc;
     },
-    {
-      present: 0,
-      full_day: 0,
-      half_day: 0,
-      late: 0,
-      unknown: 0,
-    } as Record<
-      LessonAttendanceRecord["status"],
-      number
-    >
+    {} as Record<string, number>
   );
 
   return (
@@ -559,27 +314,17 @@ function AttendanceView() {
       <div className="panel-header attendance-header">
         <div>
           <h3>Yoklama</h3>
-          <p>
-            Ders programı aktarılmışsa mevcut ders otomatik seçilir.
-            Program yoksa sınıfı ve dersi elle seçebilirsiniz.
-          </p>
+          <p>Sınıfı manuel seçin. V1 ders programına bağımlı değildir.</p>
         </div>
 
         <div className="attendance-actions">
           <select
             value={selectedClass}
-            onChange={(e) => {
-              setSelectedClass(e.target.value);
-              setSelectionMode("manual");
-              setSelectedLessonId("");
-            }}
-            disabled={!visibleClasses.length}
+            onChange={(e) => setSelectedClass(e.target.value)}
+            disabled={!classes.length}
           >
-            {!visibleClasses.length && (
-              <option value="">Sınıf bulunamadı</option>
-            )}
-
-            {visibleClasses.map((item) => (
+            {!classes.length && <option value="">Sınıf bulunamadı</option>}
+            {classes.map((item) => (
               <option key={item.code} value={item.code}>
                 {item.name}
               </option>
@@ -589,150 +334,66 @@ function AttendanceView() {
           <input
             type="date"
             value={date}
-            onChange={(e) => {
-              setDate(e.target.value);
-              setSelectionMode("auto");
-            }}
+            onChange={(e) => setDate(e.target.value)}
           />
         </div>
       </div>
 
-      {schedule.length > 0 && (
-        <div className="lesson-strip">
-          {schedule.map((item) => {
-            const isCurrent = currentLesson?.id === item.id;
-
-            return (
-              <button
-                key={item.id}
-                className={
-                  selectedLessonId === item.id
-                    ? "lesson-card active"
-                    : "lesson-card"
-                }
-                onClick={() => {
-                  setSelectionMode("manual");
-                  setSelectedLessonId(item.id);
-                  setSelectedClass(item.classCode);
-                }}
-              >
-                <strong>
-                  {item.period}. Ders
-                  {isCurrent ? " · ŞU AN" : ""}
-                </strong>
-                <span>{item.className}</span>
-                <small>{item.subjectName}</small>
-                {item.startTime && (
-                  <small>
-                    {item.startTime}
-                    {item.endTime
-                      ? " - " + item.endTime
-                      : ""}
-                  </small>
-                )}
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      {!schedule.length && (
-        <div className="info-box">
-          <strong>Ders programı henüz aktarılmamış.</strong>
-          <span>
-            MEB program ekranı açıldığında program aktarımı burada
-            otomatik ders seçimi için kullanılacak.
-          </span>
-        </div>
-      )}
+      <div className="info-box">
+        <strong>Manuel sınıf seçimi</strong>
+        <span>
+          Nöbet, ders değişikliği veya başka bir öğretmenin yerine girme gibi
+          durumlarda öğretmen farklı bir sınıf seçebilir.
+        </span>
+      </div>
 
       <div className="attendance-toolbar">
         <div className="attendance-counts">
-          <span>
-            Toplam <strong>{students.length}</strong>
-          </span>
-          <span className="count-present">
-            Var <strong>{counts.present}</strong>
-          </span>
-          <span className="count-late">
-            Geç <strong>{counts.late}</strong>
-          </span>
-          <span className="count-half">
-            Yarım Gün <strong>{counts.half_day}</strong>
-          </span>
-          <span className="count-full">
-            Tam Gün <strong>{counts.full_day}</strong>
-          </span>
-          <span className="count-unknown">
-            Bilinmiyor <strong>{counts.unknown}</strong>
-          </span>
+          <span>Toplam <strong>{students.length}</strong></span>
+          <span className="count-present">Var <strong>{counts.present || 0}</strong></span>
+          <span className="count-late">Geç <strong>{counts.late || 0}</strong></span>
+          <span className="count-full">Yok <strong>{counts.absent || 0}</strong></span>
+          <span className="count-unknown">Bilinmiyor <strong>{counts.unknown || 0}</strong></span>
         </div>
 
         <button
           className="secondary"
-          onClick={markAllPresent}
+          onClick={() =>
+            setStatuses(Object.fromEntries(
+              students.map((student) => [student.studentNo, "present"])
+            ))
+          }
           disabled={!students.length}
         >
           Herkesi Var Yap
         </button>
       </div>
 
-      {ruleWarnings.length > 0 && (
-        <div className="rule-warning">
-          <strong>{ruleWarnings.length} kural uyarısı</strong>
-          <div>
-            {ruleWarnings.slice(0, 6).map((warning, index) => (
-              <div key={warning.ruleId + "-" + warning.studentNo + "-" + index}>
-                Öğrenci {warning.studentNo}: {warning.message}
-              </div>
-            ))}
-            {ruleWarnings.length > 6 && (
-              <div>+ {ruleWarnings.length - 6} uyarı daha</div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {error && (
-        <div className="error-box attendance-error">
-          {error}
-        </div>
-      )}
-
-      {message && (
-        <div className="success-box">
-          {message}
-        </div>
-      )}
+      {error && <div className="error-box attendance-error">{error}</div>}
+      {message && <div className="success-box">{message}</div>}
 
       <div className="student-table-wrap">
         <table className="student-table">
           <thead>
-            <tr>
-              <th>No</th>
-              <th>Öğrenci</th>
-              <th>Durum</th>
-            </tr>
+            <tr><th>No</th><th>Öğrenci</th><th>Durum</th></tr>
           </thead>
-
           <tbody>
             {students.map((student) => {
-              const status =
-                statuses[student.studentNo] || "unknown";
+              const status = statuses[student.studentNo] || "unknown";
+              const options: Array<[LessonAttendanceRecord["status"], string]> = [
+                ["present", "Var"],
+                ["absent", "Yok"],
+                ["late", "Geç"],
+                ["unknown", "Bilinmiyor"],
+              ];
 
               return (
                 <tr key={student.id}>
                   <td>{student.studentNo}</td>
-                  <td>
-                    <strong>{student.name}</strong>
-                  </td>
+                  <td><strong>{student.name}</strong></td>
                   <td>
                     <div className="status-buttons">
-                      {(
-                        Object.keys(
-                          lessonStatusLabels
-                        ) as LessonAttendanceRecord["status"][]
-                      ).map((item) => (
+                      {options.map(([item, label]) => (
                         <button
                           key={item}
                           className={
@@ -740,14 +401,9 @@ function AttendanceView() {
                               ? "attendance-status active " + item
                               : "attendance-status " + item
                           }
-                          onClick={() =>
-                            setStatus(
-                              student.studentNo,
-                              item
-                            )
-                          }
+                          onClick={() => setStatus(student.studentNo, item)}
                         >
-                          {lessonStatusLabels[item]}
+                          {label}
                         </button>
                       ))}
                     </div>
@@ -769,19 +425,16 @@ function AttendanceView() {
 
       <div className="attendance-footer">
         <span>
-          {students.length
-            ? selectionMode === "auto" && currentLesson
-              ? "Mevcut ders otomatik seçildi."
-              : "Değişiklikleri kaydetmeye hazır."
-            : "Önce bir sınıf seçin."}
+          {loading
+            ? "Veriler yükleniyor..."
+            : "Gönderildiğinde kayıt yönetici incelemesine düşer."}
         </span>
-
         <button
           className="primary"
           onClick={save}
           disabled={saving || !students.length}
         >
-          {saving ? "Kaydediliyor..." : "Yoklamayı Kaydet"}
+          {saving ? "Gönderiliyor..." : "Yoklamayı Gönder"}
         </button>
       </div>
     </section>
@@ -947,34 +600,49 @@ function DashboardView({
 
 function ReviewView() {
   const { profile, user } = useAuth();
-  const [records, setRecords] =
-    useState<LessonAttendance[]>([]);
+  const [classes, setClasses] = useState<SchoolClass[]>([]);
+  const [students, setStudents] = useState<SchoolStudent[]>([]);
+  const [lessons, setLessons] = useState<LessonAttendance[]>([]);
+  const [daily, setDaily] = useState<DailyAttendanceStudent[]>([]);
+  const [selectedClass, setSelectedClass] = useState("");
+  const [date, setDate] = useState(todayLocal());
+  const [report, setReport] = useState<Awaited<ReturnType<typeof getDailyReport>>>(null);
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState("");
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [reason, setReason] = useState<Record<string, string>>({});
 
   const load = async () => {
     if (!profile?.organizationId) return;
-
     setLoading(true);
+    setError("");
 
     try {
-      const items = await getLessonAttendances(
-        profile.organizationId,
-        todayLocal()
-      );
+      const [classItems, studentItems, lessonItems, dailyItems, reportItem] =
+        await Promise.all([
+          getSchoolClasses(profile.organizationId),
+          getClassStudents(
+            profile.organizationId,
+            selectedClass || (await getSchoolClasses(profile.organizationId))[0]?.code || ""
+          ),
+          getLessonAttendances(profile.organizationId, date),
+          getDailyAttendance(profile.organizationId, date, selectedClass || undefined),
+          getDailyReport(profile.organizationId, date),
+        ]);
 
-      setRecords(
-        items.filter(
-          (item) =>
-            item.reviewStatus !== "approved"
-        )
+      setClasses(classItems);
+      const activeClass = selectedClass || classItems[0]?.code || "";
+      setSelectedClass(activeClass);
+      setStudents(
+        activeClass
+          ? await getClassStudents(profile.organizationId, activeClass)
+          : []
       );
+      setLessons(lessonItems);
+      setDaily(dailyItems);
+      setReport(reportItem);
     } catch (err) {
-      setError(
-        (err as Error)?.message ||
-          String(err)
-      );
+      setError((err as Error)?.message || String(err));
     } finally {
       setLoading(false);
     }
@@ -982,133 +650,330 @@ function ReviewView() {
 
   useEffect(() => {
     void load();
-  }, [profile?.organizationId]);
+  }, [profile?.organizationId, selectedClass, date]);
 
-  const review = async (
-    item: LessonAttendance,
-    status: "approved" | "needs_review"
-  ) => {
-    if (!profile?.organizationId || !user?.uid) return;
-
-    setBusy(item.id);
+  const calculate = async () => {
+    if (!profile?.organizationId) return;
+    setBusy(true);
     setError("");
 
     try {
-      await reviewLessonAttendance(
+      const allStudents = await getClassStudents(
         profile.organizationId,
-        item.id,
-        user.uid,
-        status
+        selectedClass
       );
+      const allLessons = await getLessonAttendances(
+        profile.organizationId,
+        date
+      );
+
+      await calculateAndSaveDailyAttendance({
+        organizationId: profile.organizationId,
+        date,
+        students: allStudents,
+        lessonAttendances: allLessons,
+      });
 
       await load();
     } catch (err) {
-      setError(
-        (err as Error)?.message ||
-          String(err)
-      );
+      setError((err as Error)?.message || String(err));
     } finally {
-      setBusy("");
+      setBusy(false);
     }
   };
+
+  const override = async (
+    item: DailyAttendanceStudent,
+    result: DailySystemResult
+  ) => {
+    if (!profile?.organizationId || !user?.uid) return;
+    const explanation =
+      reason[item.id]?.trim() || "Yönetici tarafından manuel düzeltildi.";
+
+    setBusy(true);
+    setError("");
+
+    try {
+      await overrideDailyAttendance({
+        organizationId: profile.organizationId,
+        dailyAttendanceId: item.id,
+        adminId: user.uid,
+        result,
+        reason: explanation,
+      });
+      await load();
+    } catch (err) {
+      setError((err as Error)?.message || String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const approve = async () => {
+    if (!profile?.organizationId || !user?.uid) return;
+    if (!window.confirm(
+      "Gün sonu raporu onaylanacak, kilitlenecek ve onaylanan sonuçlar e-Okul aktarım kuyruğuna alınacak. Devam edilsin mi?"
+    )) return;
+
+    setBusy(true);
+    setError("");
+
+    try {
+      await approveDailyReport(profile.organizationId, date, user.uid);
+      await load();
+    } catch (err) {
+      setError((err as Error)?.message || String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const visibleDaily = daily.filter(
+    (item) => !selectedClass || item.classCode === selectedClass
+  );
 
   return (
     <section className="panel">
       <div className="panel-header">
         <div>
-          <h3>Gün Sonu İnceleme</h3>
+          <h3>Gün Sonu Yönetim Merkezi</h3>
           <p>
-            Bugünkü öğretmen yoklamalarını kontrol
-            edin ve onaylayın.
+            Tüm sınıf ve öğrencileri, öğretmen yoklamalarını ve sistem sonuçlarını
+            kontrol edin. Yönetici nihai kararı verir.
           </p>
         </div>
-
         <span className="status-badge">
-          {records.length} bekleyen
+          {report?.locked ? "KİLİTLİ" : report?.status === "approved" ? "ONAYLI" : "TASLAK"}
         </span>
       </div>
 
-      {error && (
-        <div className="error-box attendance-error">
-          {error}
+      <div className="attendance-actions">
+        <select
+          value={selectedClass}
+          onChange={(e) => setSelectedClass(e.target.value)}
+        >
+          {classes.map((item) => (
+            <option key={item.code} value={item.code}>{item.name}</option>
+          ))}
+        </select>
+        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+        <button className="secondary" onClick={calculate} disabled={busy}>
+          {busy ? "Hesaplanıyor..." : "Gün Sonunu Hesapla"}
+        </button>
+        <button
+          className="primary"
+          onClick={approve}
+          disabled={busy || !daily.length || Boolean(report?.locked)}
+        >
+          Gün Sonunu Onayla ve Kilitle
+        </button>
+      </div>
+
+      {error && <div className="error-box attendance-error">{error}</div>}
+
+      {!loading && !visibleDaily.length && (
+        <div className="empty-state compact">
+          <strong>Henüz günlük sonuç oluşturulmadı.</strong>
+          <p>Önce öğretmen yoklamalarının gelmesini bekleyin ve “Gün Sonunu Hesapla” düğmesine basın.</p>
         </div>
       )}
 
       <div className="review-list">
-        {loading && (
-          <div className="empty-state compact">
-            <strong>Kayıtlar yükleniyor...</strong>
-          </div>
-        )}
-
-        {!loading && !records.length && (
-          <div className="empty-state compact">
-            <div className="empty-icon">✓</div>
-            <strong>Bekleyen yoklama yok.</strong>
-            <p>
-              Bugünkü kayıtlar incelenmiş durumda.
-            </p>
-          </div>
-        )}
-
-        {records.map((item) => {
-          const unknownCount =
-            item.records.filter(
-              (record) =>
-                record.status === "unknown"
-            ).length;
+        {visibleDaily.map((item) => {
+          const raw = lessons.filter((lesson) => lesson.records.some(
+            (record) => record.studentNo === item.studentNo
+          ));
 
           return (
-            <article
-              className="review-card"
-              key={item.id}
-            >
+            <article className="review-card" key={item.id}>
               <div>
-                <strong>
-                  {item.className}
-                </strong>
-                <span>
-                  {item.subjectName || "Günlük Yoklama"}
-                  {item.period
-                    ? " · " + item.period + ". ders"
-                    : ""}
-                </span>
+                <strong>{item.studentName}</strong>
+                <span>{item.className} · No: {item.studentNo}</span>
                 <small>
-                  {item.teacherName} ·{" "}
-                  {item.records.length} öğrenci
-                  {unknownCount
-                    ? " · " +
-                      unknownCount +
-                      " bilinmiyor"
-                    : ""}
+                  Sistem: <b>{dailyResultLabel(item.systemResult)}</b>
+                  {" · "}
+                  Nihai: <b>{dailyResultLabel(item.finalResult)}</b>
+                  {" · "}
+                  {raw.length} öğretmen yoklaması
                 </small>
+                <small>{item.explanation}</small>
+                {item.hasIntermediateAbsence && (
+                  <small className="error-box">🚨 Ara Ders Devamsızlığı Tespit Edildi</small>
+                )}
+                {item.adminOverride && (
+                  <small>
+                    Yönetici düzeltmesi: {item.adminOverride.reason}
+                  </small>
+                )}
               </div>
 
-              <div className="review-actions">
-                <button
-                  className="secondary"
-                  disabled={busy === item.id}
-                  onClick={() =>
-                    review(item, "needs_review")
-                  }
-                >
-                  İnceleme İste
-                </button>
-
-                <button
-                  className="primary dark-button"
-                  disabled={busy === item.id}
-                  onClick={() =>
-                    review(item, "approved")
-                  }
-                >
-                  Onayla
-                </button>
-              </div>
+              {!report?.locked && (
+                <div className="review-actions">
+                  <input
+                    placeholder="Düzeltme gerekçesi"
+                    value={reason[item.id] || ""}
+                    onChange={(e) =>
+                      setReason((current) => ({
+                        ...current,
+                        [item.id]: e.target.value,
+                      }))
+                    }
+                  />
+                  <button
+                    className="secondary"
+                    disabled={busy}
+                    onClick={() => void override(item, "present")}
+                  >
+                    Mevcut
+                  </button>
+                  <button
+                    className="secondary"
+                    disabled={busy}
+                    onClick={() => void override(item, "full_day")}
+                  >
+                    Tam Gün
+                  </button>
+                  <button
+                    className="secondary"
+                    disabled={busy}
+                    onClick={() => void override(item, "half_day")}
+                  >
+                    Yarım Gün
+                  </button>
+                  <button
+                    className="secondary"
+                    disabled={busy}
+                    onClick={() => void override(item, "late")}
+                  >
+                    Geç
+                  </button>
+                </div>
+              )}
             </article>
           );
         })}
       </div>
+    </section>
+  );
+}
+
+function dailyResultLabel(value: DailySystemResult) {
+  return {
+    present: "Mevcut",
+    half_day: "Yarım Gün",
+    full_day: "Tam Gün",
+    late: "Geç",
+    unknown: "Bilinmiyor",
+  }[value];
+}
+
+function ParentView() {
+  const { profile, user } = useAuth();
+  const [children, setChildren] = useState<SchoolStudent[]>([]);
+  const [selectedChild, setSelectedChild] = useState("");
+  const [daily, setDaily] = useState<DailyAttendanceStudent[]>([]);
+  const [notifications, setNotifications] = useState<
+    Awaited<ReturnType<typeof getParentNotifications>>
+  >([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!profile?.organizationId || !user?.uid) return;
+
+    const load = async () => {
+      setLoading(true);
+      try {
+        const [childItems, notificationItems] = await Promise.all([
+          getParentChildren(profile.organizationId, user.uid),
+          getParentNotifications(profile.organizationId, user.uid),
+        ]);
+        setChildren(childItems);
+        setSelectedChild((current) => current || childItems[0]?.id || "");
+        setNotifications(notificationItems);
+      } catch (err) {
+        setError((err as Error)?.message || String(err));
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    void load();
+  }, [profile?.organizationId, user?.uid]);
+
+  useEffect(() => {
+    if (!profile?.organizationId || !selectedChild) return;
+    getParentDailyAttendance(
+      profile.organizationId,
+      selectedChild,
+      todayLocal()
+    ).then(setDaily).catch((err) => setError((err as Error)?.message || String(err)));
+  }, [profile?.organizationId, selectedChild]);
+
+  if (loading) {
+    return <section className="panel"><strong>Veli verileri yükleniyor...</strong></section>;
+  }
+
+  return (
+    <section className="panel">
+      <div className="panel-header">
+        <div>
+          <h3>Veli Merkezi</h3>
+          <p>Çocuğunuzun doğrulanmış günlük yoklama durumlarını görüntüleyin.</p>
+        </div>
+      </div>
+
+      {error && <div className="error-box">{error}</div>}
+
+      {!children.length && (
+        <div className="empty-state compact">
+          <strong>Henüz öğrenci eşleştirmesi yapılmamış.</strong>
+        </div>
+      )}
+
+      {children.length > 0 && (
+        <>
+          <select
+            value={selectedChild}
+            onChange={(e) => setSelectedChild(e.target.value)}
+          >
+            {children.map((child) => (
+              <option key={child.id} value={child.id}>
+                {child.name} · {child.className}
+              </option>
+            ))}
+          </select>
+
+          <div className="review-list">
+            {daily.map((item) => (
+              <article className="review-card" key={item.id}>
+                <div>
+                  <strong>{item.studentName}</strong>
+                  <span>{item.className} · {formatDate(item.date)}</span>
+                  <small>Günlük sonuç: <b>{dailyResultLabel(item.finalResult)}</b></small>
+                </div>
+              </article>
+            ))}
+            {!daily.length && (
+              <div className="empty-state compact">
+                <strong>Bugün için onaylanmış günlük sonuç yok.</strong>
+              </div>
+            )}
+          </div>
+
+          <h4>Bildirimler</h4>
+          <div className="review-list">
+            {notifications.map((notification) => (
+              <article className="review-card" key={notification.id}>
+                <div>
+                  <strong>{notification.title}</strong>
+                  <span>{notification.message}</span>
+                </div>
+              </article>
+            ))}
+          </div>
+        </>
+      )}
     </section>
   );
 }
@@ -1916,18 +1781,21 @@ export default function App() {
           "Entegrasyon",
           "Ayarlar",
         ]
-      : [
-          "Ana Sayfa",
-          "Yoklama",
-          "Geçmiş",
-          "Dersler",
-          "Entegrasyon",
-          "Ayarlar",
-        ];
+      : profile.role === "parent"
+        ? ["Ana Sayfa", "Veli Merkezi", "Ayarlar"]
+        : [
+            "Ana Sayfa",
+            "Yoklama",
+            "Geçmiş",
+            "Entegrasyon",
+            "Ayarlar",
+          ];
 
   let content;
 
-  if (active === "Yoklama") {
+  if (active === "Veli Merkezi") {
+    content = <ParentView />;
+  } else if (active === "Yoklama") {
     content = <AttendanceView />;
   } else if (active === "Gün Sonu") {
     content = <ReviewView />;
@@ -1957,7 +1825,9 @@ export default function App() {
             {profile.email} ·{" "}
             {profile.role === "admin"
               ? "Yönetici"
-              : "Öğretmen"}
+              : profile.role === "parent"
+                ? "Veli"
+                : "Öğretmen"}
           </p>
 
           <button
@@ -2022,7 +1892,9 @@ export default function App() {
             <div className="user-chip">
               {profile.role === "admin"
                 ? "Yönetici"
-                : "Öğretmen"}
+                : profile.role === "parent"
+                  ? "Veli"
+                  : "Öğretmen"}
             </div>
 
             <button
