@@ -233,8 +233,20 @@ function AttendanceView() {
     studentNo: string,
     status: LessonAttendanceRecord["status"]
   ) => {
+    const previous = records
+      .filter((item) => item.classCode === selectedClass)
+      .sort((a, b) => b.period - a.period)[0]
+      ?.records.find((item) => item.studentNo === studentNo);
+
     setStatuses((current) => ({ ...current, [studentNo]: status }));
-    setMessage("");
+
+    if (previous?.status === "present" && status === "absent") {
+      setMessage(
+        "⚠️ Öğrenci önceki yoklamada Mevcut. Bu işlem ara ders devamsızlığı uyarısı oluşturacaktır."
+      );
+    } else {
+      setMessage("");
+    }
   };
 
   const save = async () => {
