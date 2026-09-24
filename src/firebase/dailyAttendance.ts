@@ -62,7 +62,7 @@ export async function getDailyAttendance(
         : [],
       hasIntermediateAbsence: data.hasIntermediateAbsence === true,
       adminOverride: data.adminOverride as AdminOverride | undefined,
-      approvalStatus: data.approvalStatus === "approved" ? "approved" : "draft",
+      approvalStatus: (data.approvalStatus === "approved" ? "approved" : "draft") as "approved" | "draft",
       approvedBy: data.approvedBy ? String(data.approvedBy) : undefined,
       approvedAt: data.approvedAt,
     };
