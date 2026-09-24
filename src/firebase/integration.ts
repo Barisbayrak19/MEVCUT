@@ -54,6 +54,9 @@ export async function getEOkulQueue(
         attendanceId: String(data.attendanceId || ""),
         status: (data.status || "pending") as EOkulQueueItem["status"],
         attempts: Number(data.attempts || 0),
+        dailyAttendanceId: data.dailyAttendanceId ? String(data.dailyAttendanceId) : undefined,
+        date: data.date ? String(data.date) : undefined,
+        classCode: data.classCode ? String(data.classCode) : undefined,
         lastError: data.lastError ? String(data.lastError) : undefined,
         createdAt: data.createdAt,
         updatedAt: data.updatedAt,
@@ -75,9 +78,41 @@ export async function getLessonAttendanceById(
   );
 
   const record = snapshot.docs.find((item) => item.id === attendanceId);
-  if (!record) return null;
+  if (record) {
+    return mapAttendance(record.id, record.data(), organizationId);
+  }
 
-  return mapAttendance(record.id, record.data(), organizationId);
+  const dailySnapshot = await getDocs(
+    query(
+      collection(db, "dailyAttendance"),
+      where("organizationId", "==", organizationId)
+    )
+  );
+
+  const daily = dailySnapshot.docs.find((item) => item.id === attendanceId);
+  if (!daily) return null;
+
+  const data = daily.data();
+  return mapAttendance(daily.id, {
+    organizationId,
+    date: data.date,
+    classCode: data.classCode,
+    className: data.className,
+    subjectCode: "daily-final",
+    subjectName: "Gün Sonu Nihai Yoklama",
+    teacherUid: "",
+    teacherName: "Yönetici Onayı",
+    period: 0,
+    lessonKey: daily.id,
+    records: [{
+      studentNo: String(data.studentNo || ""),
+      status: String(data.finalResult || "unknown"),
+    }],
+    reviewStatus: data.approvalStatus === "approved" ? "approved" : "submitted",
+    updatedBy: String(data.approvedBy || ""),
+    updatedAt: data.updatedAt,
+    ruleViolations: [],
+  }, organizationId);
 }
 
 export async function updateEOkulQueue(
