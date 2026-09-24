@@ -125,7 +125,7 @@ function LoginView() {
         <div className="brand-mark">M</div>
         <p className="eyebrow">DİJİTAL YOKLAMA</p>
         <h1>MEVCUT</h1>
-        <p>Yönetici veya öğretmen hesabınızla giriş yapın.</p>
+        <p>Yönetici, öğretmen veya veli hesabınızla giriş yapın.</p>
 
         <input
           type="email"
