@@ -814,18 +814,63 @@ function ReviewView() {
     (item) => !selectedClass || item.classCode === selectedClass
   );
 
+  const periods = Array.from(
+    new Set(lessons.map((lesson) => lesson.period).filter(Boolean))
+  ).sort((a, b) => a - b);
+
+  const lessonByKey = new Map(
+    lessons.map((lesson) => [
+      lesson.classCode + "__" + lesson.period,
+      lesson,
+    ])
+  );
+
+  const statusShort = (status?: LessonAttendanceRecord["status"]) =>
+    ({
+      present: "V",
+      absent: "Y",
+      full_day: "T",
+      half_day: "½",
+      late: "G",
+      unknown: "?",
+    }[status || "unknown"]);
+
+  const statusTitle = (status?: LessonAttendanceRecord["status"]) =>
+    ({
+      present: "Var",
+      absent: "Yok",
+      full_day: "Tam Gün",
+      half_day: "Yarım Gün",
+      late: "Geç",
+      unknown: "Bilinmiyor",
+    }[status || "unknown"]);
+
+  const getStudentLessonStatus = (
+    item: DailyAttendanceStudent,
+    period: number
+  ) => {
+    const lesson = lessonByKey.get(item.classCode + "__" + period);
+    return lesson?.records.find(
+      (record) => record.studentNo === item.studentNo
+    )?.status;
+  };
+
   return (
-    <section className="panel">
+    <section className="panel review-panel">
       <div className="panel-header">
         <div>
           <h3>Gün Sonu Yönetim Merkezi</h3>
           <p>
-            Tüm sınıf ve öğrencileri, öğretmen yoklamalarını ve sistem sonuçlarını
-            kontrol edin. Yönetici nihai kararı verir.
+            Sınıf, öğrenci ve ders bazındaki tüm yoklama sonuçlarını tek tabloda
+            karşılaştırın ve gün sonu kararını verin.
           </p>
         </div>
         <span className="status-badge">
-          {report?.locked ? "KİLİTLİ" : report?.status === "approved" ? "ONAYLI" : "TASLAK"}
+          {report?.locked
+            ? "KİLİTLİ"
+            : report?.status === "approved"
+            ? "ONAYLI"
+            : "TASLAK"}
         </span>
       </div>
 
@@ -836,10 +881,16 @@ function ReviewView() {
         >
           <option value="">Tüm Sınıflar</option>
           {classes.map((item) => (
-            <option key={item.code} value={item.code}>{item.name}</option>
+            <option key={item.code} value={item.code}>
+              {item.name}
+            </option>
           ))}
         </select>
-        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+        <input
+          type="date"
+          value={date}
+          onChange={(e) => setDate(e.target.value)}
+        />
         <button className="secondary" onClick={calculate} disabled={busy}>
           {busy ? "Hesaplanıyor..." : "Gün Sonunu Hesapla"}
         </button>
@@ -857,100 +908,157 @@ function ReviewView() {
       {!loading && !visibleDaily.length && (
         <div className="empty-state compact">
           <strong>Henüz günlük sonuç oluşturulmadı.</strong>
-          <p>Önce öğretmen yoklamalarının gelmesini bekleyin ve “Gün Sonunu Hesapla” düğmesine basın.</p>
+          <p>
+            Önce öğretmen yoklamalarının gelmesini bekleyin ve “Gün Sonunu
+            Hesapla” düğmesine basın.
+          </p>
         </div>
       )}
 
-      <div className="review-list">
-        {visibleDaily.map((item) => {
-          const raw = lessons.filter((lesson) => lesson.records.some(
-            (record) => record.studentNo === item.studentNo
-          ));
+      {visibleDaily.length > 0 && (
+        <div className="review-table-wrap">
+          <table className="review-table">
+            <thead>
+              <tr>
+                <th className="class-col">Sınıf</th>
+                <th className="student-col">Öğrenci</th>
+                {periods.map((period) => {
+                  const lesson = selectedClass
+                    ? lessonByKey.get(selectedClass + "__" + period)
+                    : lessons.find((item) => item.period === period);
 
-          return (
-            <article className="review-card" key={item.id}>
-              <div>
-                <strong>{item.studentName}</strong>
-                <span>{item.className} · No: {item.studentNo}</span>
-                <small>
-                  Sistem: <b>{dailyResultLabel(item.systemResult)}</b>
-                  {" · "}
-                  Nihai: <b>{dailyResultLabel(item.finalResult)}</b>
-                  {" · "}
-                  {raw.length} öğretmen yoklaması
-                </small>
-                <small>
-                  Ham kayıtlar:{" "}
-                  {raw.length
-                    ? raw.map((lesson) => {
-                        const record = lesson.records.find(
-                          (entry) => entry.studentNo === item.studentNo
-                        );
-                        return (
-                          (lesson.teacherName || "Öğretmen") +
-                          ": " +
-                          (record?.status || "unknown")
-                        );
-                      }).join(" · ")
-                    : "Henüz yoklama yok"}
-                </small>
-                <small>{item.explanation}</small>
-                {item.hasIntermediateAbsence && (
-                  <small className="error-box">🚨 Ara Ders Devamsızlığı Tespit Edildi</small>
-                )}
-                {item.adminOverride && (
-                  <small>
-                    Yönetici düzeltmesi: {item.adminOverride.reason}
-                  </small>
-                )}
-              </div>
+                  return (
+                    <th key={period} className="period-col">
+                      <span>{period}. Ders</span>
+                      <small>
+                        {lesson?.subjectName || "Ders bilgisi bekleniyor"}
+                      </small>
+                    </th>
+                  );
+                })}
+                <th className="result-col">Sistem</th>
+                <th className="result-col">Nihai</th>
+                <th className="action-col">İşlem</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleDaily.map((item) => (
+                <tr key={item.id}>
+                  <td className="class-cell">{item.className}</td>
+                  <td className="student-cell">
+                    <strong>{item.studentName}</strong>
+                    <small>No: {item.studentNo}</small>
+                    {item.hasIntermediateAbsence && (
+                      <em>🚨 Ara ders</em>
+                    )}
+                  </td>
 
-              {!report?.locked && (
-                <div className="review-actions">
-                  <input
-                    placeholder="Düzeltme gerekçesi"
-                    value={reason[item.id] || ""}
-                    onChange={(e) =>
-                      setReason((current) => ({
-                        ...current,
-                        [item.id]: e.target.value,
-                      }))
-                    }
-                  />
-                  <button
-                    className="secondary"
-                    disabled={busy}
-                    onClick={() => void override(item, "present")}
-                  >
-                    Mevcut
-                  </button>
-                  <button
-                    className="secondary"
-                    disabled={busy}
-                    onClick={() => void override(item, "full_day")}
-                  >
-                    Tam Gün
-                  </button>
-                  <button
-                    className="secondary"
-                    disabled={busy}
-                    onClick={() => void override(item, "half_day")}
-                  >
-                    Yarım Gün
-                  </button>
-                  <button
-                    className="secondary"
-                    disabled={busy}
-                    onClick={() => void override(item, "late")}
-                  >
-                    Geç
-                  </button>
-                </div>
-              )}
-            </article>
-          );
-        })}
+                  {periods.map((period) => {
+                    const status = getStudentLessonStatus(item, period);
+                    return (
+                      <td key={period} className="period-cell">
+                        <span
+                          className={"attendance-dot status-" + (status || "unknown")}
+                          title={statusTitle(status)}
+                        >
+                          {statusShort(status)}
+                        </span>
+                        {!status && <small>—</small>}
+                      </td>
+                    );
+                  })}
+
+                  <td>
+                    <span className="table-result">
+                      {dailyResultLabel(item.systemResult)}
+                    </span>
+                  </td>
+                  <td>
+                    <span className="table-result final">
+                      {dailyResultLabel(item.finalResult)}
+                    </span>
+                  </td>
+                  <td>
+                    {!report?.locked ? (
+                      <div className="table-actions">
+                        <input
+                          placeholder="Gerekçe"
+                          value={reason[item.id] || ""}
+                          onChange={(e) =>
+                            setReason((current) => ({
+                              ...current,
+                              [item.id]: e.target.value,
+                            }))
+                          }
+                        />
+                        <div>
+                          <button
+                            className="secondary"
+                            disabled={busy}
+                            onClick={() => void override(item, "present")}
+                          >
+                            Var
+                          </button>
+                          <button
+                            className="secondary"
+                            disabled={busy}
+                            onClick={() => void override(item, "half_day")}
+                          >
+                            Yarım
+                          </button>
+                          <button
+                            className="secondary"
+                            disabled={busy}
+                            onClick={() => void override(item, "full_day")}
+                          >
+                            Tam
+                          </button>
+                          <button
+                            className="secondary"
+                            disabled={busy}
+                            onClick={() => void override(item, "late")}
+                          >
+                            Geç
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <span className="locked-cell">🔒 Kilitli</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {visibleDaily.length > 0 && (
+        <div className="review-legend">
+          <span><b>V</b> Var</span>
+          <span><b>Y</b> Yok</span>
+          <span><b>G</b> Geç</span>
+          <span><b>?</b> Bilinmiyor</span>
+          <span><b>½</b> Yarım Gün</span>
+          <span className="legend-alert">🚨 Ara ders devamsızlığı</span>
+        </div>
+      )}
+
+      <div className="review-footer">
+        <span>
+          {visibleDaily.length} öğrenci · {periods.length} ders sütunu ·{" "}
+          {lessons.length} öğretmen yoklaması
+        </span>
+        <button
+          className="primary"
+          onClick={approve}
+          disabled={busy || !daily.length || Boolean(report?.locked)}
+        >
+          Gün Sonunu Onayla ve Kilitle
+        </button>
       </div>
+    </section>
+
     </section>
   );
 }
