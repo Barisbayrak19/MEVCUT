@@ -1866,11 +1866,12 @@ export default function App() {
       </section>
     );
   } else {
-    content = (
-      <DashboardView
-        onNavigate={setActive}
-      />
-    );
+    content =
+      profile.role === "parent" ? (
+        <ParentView />
+      ) : (
+        <DashboardView onNavigate={setActive} />
+      );
   }
 
   return (
