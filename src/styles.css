@@ -684,3 +684,67 @@
   .eod-mini-kpi{min-height:68px}
   .eod-class-grid{grid-template-columns:1fr}
 }
+
+
+/* End-of-day class list */
+.eod-class-list{border-top:1px solid #eef2f7}
+.eod-class-list-head,
+.eod-class-row{
+  display:grid;
+  grid-template-columns:minmax(130px,1.6fr) minmax(70px,.55fr) minmax(100px,.9fr) minmax(55px,.45fr) minmax(105px,.8fr) 28px;
+  align-items:center;
+  gap:12px;
+}
+.eod-class-list-head{
+  padding:10px 18px;
+  background:#f8fafc;
+  color:#64748b;
+  font-size:9px;
+  font-weight:900;
+  text-transform:uppercase;
+  letter-spacing:.06em;
+}
+.eod-class-row{
+  width:100%;
+  border:0;
+  border-top:1px solid #eef2f7;
+  background:#fff;
+  padding:13px 18px;
+  text-align:left;
+  color:#334155;
+  font:inherit;
+  font-size:11px;
+  cursor:pointer;
+  transition:background .15s,box-shadow .15s;
+}
+.eod-class-row:hover{background:#f8fbff}
+.eod-class-row.selected{background:#eff6ff;box-shadow:inset 3px 0 #2563eb}
+.eod-class-row.ready .eod-class-name strong{color:#166534}
+.eod-class-row.missing .eod-class-name strong{color:#92400e}
+.eod-class-row.review .eod-class-name strong{color:#991b1b}
+.eod-class-name strong{font-size:13px;color:#0f172a}
+.eod-class-row>span:not(.eod-class-name){color:#475569;font-weight:700}
+.eod-class-row .problem-count{color:#dc2626;font-weight:900}
+.eod-class-row .zero-count{color:#94a3b8}
+.eod-class-arrow{font-size:20px!important;color:#94a3b8!important;text-align:right}
+.eod-class-row .eod-state{justify-self:start}
+.eod-issues-more{padding:10px 14px;border-top:1px solid #eef2f7;text-align:center;color:#64748b;font-size:9px;font-weight:800}
+.eod-row-actions button.present{background:#f0fdf4;border-color:#bbf7d0;color:#15803d}
+.eod-row-actions button.absent{background:#fef2f2;border-color:#fecaca;color:#b91c1c}
+.eod-row-actions button.late{background:#fffbeb;border-color:#fde68a;color:#a16207}
+.eod-row-actions button.present:hover{background:#dcfce7}
+.eod-row-actions button.absent:hover{background:#fee2e2}
+.eod-row-actions button.late:hover{background:#fef3c7}
+.eod-status-pill{width:auto;min-width:34px;padding:0 7px}
+.eod-detail-legend b{width:auto!important;min-width:28px;padding:0 5px}
+@media(max-width:820px){
+  .eod-class-list-head{display:none}
+  .eod-class-row{
+    grid-template-columns:minmax(110px,1.5fr) 60px minmax(90px,1fr) 40px 95px 20px;
+    gap:7px;
+    padding:12px 10px;
+  }
+  .eod-class-tools{padding-left:10px;padding-right:10px}
+  .eod-class-list{overflow-x:auto}
+  .eod-class-row{min-width:600px}
+}
