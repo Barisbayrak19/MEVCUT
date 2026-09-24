@@ -1014,7 +1014,7 @@ function ReviewView() {
             onClick={() => void approve()}
             disabled={busy || !daily.length || Boolean(report?.locked)}
           >
-            🔒 Gün Sonunu Onayla ve Kilitle
+            ✓ Onayla ve e-Okula Aktar
           </button>
         </div>
       </div>
@@ -1080,14 +1080,14 @@ function ReviewView() {
         <section className="eod-card eod-classes-card">
           <div className="eod-card-header">
             <div>
-              <h3>Sınıfların Günlük Durumu</h3>
-              <p>Sınıfların yoklama tamamlanma ve sorun durumunu tek bakışta görün.</p>
+              <h3>Sınıflar</h3>
+              <p>Bir sınıfa tıklayın; o sınıftaki öğrencilerin ders ders yoklama durumunu açın.</p>
             </div>
             <div className="eod-legend">
               <span><i className="ready" /> Hazır</span>
               <span><i className="missing" /> Eksik</span>
               <span><i className="review" /> İnceleme</span>
-              <span><i className="empty" /> Tamamlanmadı</span>
+              <span><i className="empty" /> Başlanmadı</span>
             </div>
           </div>
 
@@ -1110,33 +1110,53 @@ function ReviewView() {
               ))}
             </select>
             {selectedClass && (
-              <button className="eod-btn ghost small" onClick={() => { setSelectedClass(""); setDetailClass(""); }}>
-                Sınıf filtresini temizle
+              <button
+                className="eod-btn ghost small"
+                onClick={() => { setSelectedClass(""); setDetailClass(""); }}
+              >
+                Tüm sınıfları göster
               </button>
             )}
           </div>
 
-          <div className="eod-class-grid">
+          <div className="eod-class-list">
+            <div className="eod-class-list-head">
+              <span>Sınıf</span>
+              <span>Öğrenci</span>
+              <span>Yoklama</span>
+              <span>Sorun</span>
+              <span>Durum</span>
+              <span></span>
+            </div>
+
             {visibleClasses.map((item) => (
               <button
                 key={item.code}
-                className={"eod-class-card " + item.state + (detailClass === item.code ? " selected" : "")}
+                className={"eod-class-row " + item.state + (detailClass === item.code ? " selected" : "")}
                 onClick={() => selectClass(item.code)}
               >
-                <div className="eod-class-top">
+                <span className="eod-class-name">
                   <strong>{item.name}</strong>
-                  <span className={"eod-state " + item.state}>
-                    {item.state === "ready" ? "✓ Hazır" : item.state === "missing" ? "● Eksik" : item.state === "review" ? "! İncele" : "○ Başlanmadı"}
-                  </span>
-                </div>
-                <small>{item.studentCount} öğrenci</small>
-                <div className="eod-class-progress">
-                  <i style={{ width: (expectedPeriods ? Math.min(100, Math.round((item.submittedPeriods / expectedPeriods) * 100)) : 0) + "%" }} />
-                </div>
-                <div className="eod-class-bottom">
-                  <span>{item.submittedPeriods} / {expectedPeriods || "—"} ders</span>
-                  <b>{item.problemCount ? item.problemCount + " sorun" : "0 sorun"}</b>
-                </div>
+                </span>
+                <span>{item.studentCount}</span>
+                <span>
+                  <b>{item.submittedPeriods}</b> / {expectedPeriods || "—"} ders
+                </span>
+                <span className={item.problemCount ? "problem-count" : "zero-count"}>
+                  {item.problemCount || 0}
+                </span>
+                <span>
+                  <em className={"eod-state " + item.state}>
+                    {item.state === "ready"
+                      ? "✓ Hazır"
+                      : item.state === "missing"
+                        ? "● Eksik"
+                        : item.state === "review"
+                          ? "! İncele"
+                          : "○ Başlanmadı"}
+                  </em>
+                </span>
+                <span className="eod-class-arrow">›</span>
               </button>
             ))}
 
@@ -1198,9 +1218,7 @@ function ReviewView() {
           </div>
 
           {issueItems.length > 7 && (
-            <button className="eod-all-issues" onClick={() => setIssueFilter(issueFilter)}>
-              Tümünü Gör ({issueItems.length})
-            </button>
+            <div className="eod-issues-more">İlk 7 kayıt gösteriliyor · toplam {issueItems.length}</div>
           )}
         </section>
       </div>
@@ -1333,7 +1351,7 @@ function ReviewView() {
         <div className="eod-approval-bar">
           <div>
             <strong>{report?.locked ? "Gün sonu kilitli" : "Son kontrol tamamlandı mı?"}</strong>
-            <span>Onay, mevcut nihai sonuçları kilitler ve e-Okul aktarım kuyruğunu başlatır.</span>
+            <span>Onay, nihai sonuçları kilitler ve onaylanan kayıtları e-Okul aktarım kuyruğuna gönderir.</span>
           </div>
           <button
             className="eod-btn green"
