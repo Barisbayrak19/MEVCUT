@@ -54,6 +54,7 @@ export async function saveSchoolSettings(args: {
   const lessonCount = Math.max(1, Math.min(20, Math.trunc(args.lessonCount)));
   const lessonDurationMinutes = Math.max(1, Math.min(180, Math.trunc(args.lessonDurationMinutes)));
   const breakDurationMinutes = Math.max(0, Math.min(120, Math.trunc(args.breakDurationMinutes)));
+  const lunchEnabled = args.lunchEnabled !== false;
   const lunchDurationMinutes = Math.max(0, Math.min(180, Math.trunc(args.lunchDurationMinutes)));
   const lunchAfterPeriod = Math.max(0, Math.min(Math.max(lessonCount - 1, 0), Math.trunc(args.lunchAfterPeriod)));
 
