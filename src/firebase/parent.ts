@@ -1,5 +1,7 @@
 import {
   collection,
+  doc,
+  getDoc,
   getDocs,
   query,
   where,
@@ -34,14 +36,16 @@ export async function getParentChildren(
   const studentIds = relationships.docs.map((item) => String(item.data().studentId || ""));
   if (!studentIds.length) return [];
 
-  const students = await getDocs(
-    query(collection(db, "students"), where("organizationId", "==", organizationId))
+  const studentDocs = await Promise.all(
+    studentIds.map((studentId) =>
+      getDoc(doc(db, "students", studentId))
+    )
   );
 
-  return students.docs
-    .filter((item) => studentIds.includes(item.id))
+  return studentDocs
+    .filter((item) => item.exists())
     .map((item) => {
-      const data = item.data();
+      const data = item.data()!;
       return {
         id: item.id,
         studentNo: String(data.studentNo || ""),
