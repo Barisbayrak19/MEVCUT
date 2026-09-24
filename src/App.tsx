@@ -2078,7 +2078,7 @@ export default function App() {
   } else if (active === "Ayarlar") {
     content = (
       <>
-        <SchoolSettingsView />
+        {profile.role === "admin" && <SchoolSettingsView />}
         <section className="panel">
           <div className="panel-header">
             <div>
