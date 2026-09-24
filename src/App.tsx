@@ -1059,7 +1059,6 @@ function ReviewView() {
       </div>
     </section>
 
-    </section>
   );
 }
 
