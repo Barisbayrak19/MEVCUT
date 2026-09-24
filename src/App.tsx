@@ -168,6 +168,8 @@ function AttendanceView() {
   const [records, setRecords] = useState<LessonAttendance[]>([]);
   const [selectedClass, setSelectedClass] = useState("");
   const [date, setDate] = useState(todayLocal());
+  const [schoolSettings, setSchoolSettings] = useState<SchoolSettings | null>(null);
+  const [selectedPeriod, setSelectedPeriod] = useState(1);
   const [statuses, setStatuses] =
     useState<Record<string, LessonAttendanceRecord["status"]>>({});
   const [loading, setLoading] = useState(true);
