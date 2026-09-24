@@ -41,10 +41,11 @@ import {
   getParentNotifications,
 } from "./firebase/parent";
 import type {
-  AttendanceStatus,
   DailyAttendanceStudent,
   DailySystemResult,
 } from "./types/dailyAttendance";
+
+type AttendanceStatus = LessonAttendanceRecord["status"];
 import type { EOkulImportPayload } from "./types/school";
 
 const attendanceLabels: Record<AttendanceStatus, string> = {
@@ -58,6 +59,7 @@ const attendanceLabels: Record<AttendanceStatus, string> = {
 
 const lessonStatusLabels: Record<LessonAttendanceRecord["status"], string> = {
   present: "Var",
+  absent: "Yok",
   full_day: "Tam Gün",
   half_day: "Yarım Gün",
   late: "Geç",
