@@ -252,3 +252,50 @@
 .settings-save-bar .primary:hover{background:#1d4ed8}
 @media(max-width:1120px){.settings-layout{grid-template-columns:1fr}.settings-preview-card{min-width:0}}
 @media(max-width:760px){.settings-heading{align-items:flex-start;flex-direction:column}.settings-heading h2{font-size:28px}.settings-tabs{grid-template-columns:1fr 1fr}.settings-form-grid,.lunch-grid{grid-template-columns:1fr}.settings-actions,.settings-save-bar,.preview-footer{grid-template-columns:1fr;display:grid}.settings-save-bar .primary{width:100%}.settings-eokul-button{display:none}}
+
+
+/* End-of-day class x lesson matrix */
+.review-panel{min-width:0}
+.review-table-wrap{margin-top:16px;border:1px solid #e2e8f0;border-radius:14px;overflow:auto;background:#fff}
+.review-table{width:100%;min-width:1050px;border-collapse:separate;border-spacing:0}
+.review-table th{position:sticky;top:0;z-index:2;padding:11px 10px;text-align:left;background:#f8fafc;border-bottom:1px solid #e2e8f0;color:#64748b;font-size:10px;text-transform:uppercase;letter-spacing:.06em;white-space:nowrap}
+.review-table td{padding:10px;border-bottom:1px solid #eef2f7;color:#334155;font-size:11px;vertical-align:middle;background:#fff}
+.review-table tbody tr:hover td{background:#f8fbff}
+.review-table tbody tr:last-child td{border-bottom:0}
+.review-table .class-col{width:120px}
+.review-table .student-col{min-width:170px}
+.review-table .period-col{text-align:center;min-width:76px}
+.review-table .period-col small{display:block;margin-top:3px;max-width:110px;overflow:hidden;text-overflow:ellipsis;text-transform:none;letter-spacing:0;font-size:9px;font-weight:600;color:#94a3b8}
+.review-table .result-col{min-width:90px;text-align:center}
+.review-table .action-col{min-width:235px}
+.class-cell{font-weight:800;color:#0f172a!important;white-space:nowrap}
+.student-cell strong{display:block;color:#0f172a;font-size:12px}
+.student-cell small{display:block;margin-top:3px;color:#94a3b8;font-size:9px}
+.student-cell em{display:inline-block;margin-top:5px;padding:3px 5px;border-radius:5px;background:#fef2f2;color:#dc2626;font-style:normal;font-size:9px;font-weight:800}
+.period-cell{text-align:center!important}
+.attendance-dot{display:inline-grid;place-items:center;width:27px;height:27px;border-radius:8px;font-size:10px;font-weight:900}
+.status-present{background:#dcfce7;color:#15803d}
+.status-absent{background:#fee2e2;color:#b91c1c}
+.status-late{background:#fef3c7;color:#a16207}
+.status-full_day{background:#fee2e2;color:#991b1b}
+.status-half_day{background:#ffedd5;color:#c2410c}
+.status-unknown{background:#f1f5f9;color:#64748b}
+.period-cell>small{color:#cbd5e1}
+.table-result{display:inline-flex;align-items:center;justify-content:center;min-width:72px;padding:6px 7px;border-radius:7px;background:#f1f5f9;color:#475569;font-size:10px;font-weight:800;white-space:nowrap}
+.table-result.final{background:#eff6ff;color:#1d4ed8}
+.table-actions{display:grid;gap:6px}
+.table-actions input{width:100%;box-sizing:border-box;border:1px solid #dbe3ef;border-radius:7px;padding:7px 8px;outline:0;font:inherit;font-size:10px}
+.table-actions input:focus{border-color:#60a5fa;box-shadow:0 0 0 2px #dbeafe}
+.table-actions>div{display:flex;gap:4px;flex-wrap:wrap}
+.table-actions button{padding:5px 7px;font-size:9px}
+.locked-cell{color:#94a3b8;font-size:10px;font-weight:700;white-space:nowrap}
+.review-legend{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:12px 2px;color:#64748b;font-size:10px}
+.review-legend span{display:inline-flex;align-items:center;gap:4px}
+.review-legend b{display:inline-grid;place-items:center;width:19px;height:19px;border-radius:5px;background:#f1f5f9;color:#334155}
+.review-legend .legend-alert{color:#dc2626;font-weight:700}
+.review-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:8px;padding:14px 16px;border:1px solid #e2e8f0;border-radius:12px;background:#f8fafc;color:#64748b;font-size:11px}
+.review-footer .primary{background:#2563eb;color:#fff}
+@media(max-width:900px){
+  .review-footer{align-items:stretch;flex-direction:column}
+  .review-footer .primary{width:100%}
+}
