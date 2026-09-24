@@ -945,12 +945,12 @@ function ReviewView() {
 
   const statusShort = (status?: LessonAttendanceRecord["status"]) =>
     ({
-      present: "V",
-      absent: "Y",
-      full_day: "T",
+      present: "Var",
+      absent: "Yok",
+      full_day: "Tam",
       half_day: "½",
-      late: "G",
-      unknown: "?",
+      late: "Geç",
+      unknown: "—",
     }[status || "unknown"]);
 
   const statusTitle = (status?: LessonAttendanceRecord["status"]) =>
@@ -1303,10 +1303,9 @@ function ReviewView() {
                                 placeholder="Gerekçe"
                               />
                               <div>
-                                <button onClick={() => void override(item, "present")} disabled={busy}>Var</button>
-                                <button onClick={() => void override(item, "half_day")} disabled={busy}>½</button>
-                                <button onClick={() => void override(item, "full_day")} disabled={busy}>Tam</button>
-                                <button onClick={() => void override(item, "late")} disabled={busy}>Geç</button>
+                                <button className="present" onClick={() => void override(item, "present")} disabled={busy}>Var</button>
+                                <button className="absent" onClick={() => void override(item, "full_day")} disabled={busy}>Yok</button>
+                                <button className="late" onClick={() => void override(item, "late")} disabled={busy}>Geç</button>
                               </div>
                             </div>
                           ) : (
@@ -1326,11 +1325,10 @@ function ReviewView() {
           )}
 
           <div className="eod-detail-legend">
-            <span><b className="status-present">V</b> Var</span>
-            <span><b className="status-absent">Y</b> Yok</span>
-            <span><b className="status-late">G</b> Geç</span>
-            <span><b className="status-unknown">?</b> Bilinmiyor</span>
-            <span><b className="status-half_day">½</b> Yarım Gün</span>
+            <span><b className="status-present">Var</b></span>
+            <span><b className="status-absent">Yok</b></span>
+            <span><b className="status-late">Geç</b></span>
+            <span><b className="status-unknown">—</b> Bilgi yok</span>
             <span>🚨 Ara ders devamsızlığı</span>
           </div>
         </section>
@@ -1358,7 +1356,7 @@ function ReviewView() {
             onClick={() => void approve()}
             disabled={busy || !daily.length || Boolean(report?.locked)}
           >
-            🔒 Gün Sonunu Onayla ve Kilitle
+            ✓ Onayla ve e-Okula Aktar
           </button>
         </div>
       )}
