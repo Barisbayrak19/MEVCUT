@@ -27,8 +27,9 @@ export async function getSchoolSettings(
     lessonCount: Number(data.lessonCount || lessonTimes.length || 0),
     dayStartTime: String(data.dayStartTime || lessonTimes[0]?.startTime || "08:30"),
     lessonDurationMinutes: Number(data.lessonDurationMinutes || 40),
-    breakDurationMinutes: Number(data.breakDurationMinutes || 10),
-    lunchDurationMinutes: Number(data.lunchDurationMinutes || 45),
+    breakDurationMinutes: Number(data.breakDurationMinutes ?? 10),
+    lunchEnabled: data.lunchEnabled !== false,
+    lunchDurationMinutes: Number(data.lunchDurationMinutes ?? 45),
     lunchAfterPeriod: Number(data.lunchAfterPeriod || 4),
     lessonTimes,
     source: data.source === "e-okul" ? "e-okul" : "manual",
@@ -43,6 +44,7 @@ export async function saveSchoolSettings(args: {
   dayStartTime: string;
   lessonDurationMinutes: number;
   breakDurationMinutes: number;
+  lunchEnabled: boolean;
   lunchDurationMinutes: number;
   lunchAfterPeriod: number;
   lessonTimes?: SchoolSettings["lessonTimes"];
@@ -63,6 +65,7 @@ export async function saveSchoolSettings(args: {
       dayStartTime: args.dayStartTime || "08:30",
       lessonDurationMinutes,
       breakDurationMinutes,
+      lunchEnabled,
       lunchDurationMinutes,
       lunchAfterPeriod,
       lessonTimes: args.lessonTimes || [],
