@@ -42,7 +42,7 @@ export interface AttendanceRuleViolation {
 
 export interface LessonAttendanceRecord {
   studentNo: string;
-  status: "present" | "full_day" | "half_day" | "late" | "unknown";
+  status: "present" | "absent" | "full_day" | "half_day" | "late" | "unknown";
 }
 
 export interface LessonAttendance {
@@ -78,7 +78,7 @@ export interface AttendanceAuditLog {
   newStatus: string;
   changedBy: string;
   changedAt?: unknown;
-  action: "status_change" | "approved" | "needs_review";
+  action: "status_change" | "admin_override" | "approved" | "needs_review";
 }
 
 export interface EOkulQueueItem {
