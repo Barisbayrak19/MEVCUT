@@ -4,40 +4,55 @@ import { signInWithEmailAndPassword } from "./firebase/auth";
 import {
   getClassStudents,
   getSchoolClasses,
-  getAttendance,
   importEOkulData,
-  type AttendanceStatus,
   type SchoolClass,
   type SchoolStudent,
 } from "./firebase/school";
 import {
-  getSchedule,
   getTeacherAssignments,
   importAcademicData,
 } from "./firebase/academic";
 import {
   getLessonAttendances,
-  reviewLessonAttendance,
   saveLessonAttendance,
 } from "./firebase/attendance";
 import type {
   AttendanceRuleViolation,
   LessonAttendance,
   LessonAttendanceRecord,
-  ScheduleEntry,
   TeacherAssignment,
 } from "./types/academic";
 import { evaluateAttendanceRules } from "./rules/attendance";
-import { getCurrentLesson } from "./utils/lesson";
 import {
   getEOkulQueue,
   getLessonAttendanceById,
   updateEOkulQueue,
 } from "./firebase/integration";
+import {
+  approveDailyReport,
+  calculateAndSaveDailyAttendance,
+  getDailyAttendance,
+  getDailyReport,
+  overrideDailyAttendance,
+} from "./firebase/dailyAttendance";
+import {
+  getParentChildren,
+  getParentDailyAttendance,
+  getParentNotifications,
+} from "./firebase/parent";
+import type {
+  DailyAttendanceStudent,
+  DailySystemResult,
+} from "./types/dailyAttendance";
+import { getSchoolSettings, saveSchoolSettings } from "./firebase/schoolSettings";
+import type { SchoolSettings } from "./types/schoolSettings";
+
+type AttendanceStatus = LessonAttendanceRecord["status"];
 import type { EOkulImportPayload } from "./types/school";
 
 const attendanceLabels: Record<AttendanceStatus, string> = {
   present: "Var",
+  absent: "Yok",
   full_day: "Tam Gün",
   half_day: "Yarım Gün",
   late: "Geç",
@@ -46,6 +61,7 @@ const attendanceLabels: Record<AttendanceStatus, string> = {
 
 const lessonStatusLabels: Record<LessonAttendanceRecord["status"], string> = {
   present: "Var",
+  absent: "Yok",
   full_day: "Tam Gün",
   half_day: "Yarım Gün",
   late: "Geç",
@@ -115,7 +131,7 @@ function LoginView() {
         <div className="brand-mark">M</div>
         <p className="eyebrow">DİJİTAL YOKLAMA</p>
         <h1>MEVCUT</h1>
-        <p>Yönetici veya öğretmen hesabınızla giriş yapın.</p>
+        <p>Yönetici, öğretmen veya veli hesabınızla giriş yapın.</p>
 
         <input
           type="email"
@@ -147,387 +163,178 @@ function LoginView() {
 
 function AttendanceView() {
   const { user, profile } = useAuth();
-
   const [classes, setClasses] = useState<SchoolClass[]>([]);
-  const [assignments, setAssignments] = useState<TeacherAssignment[]>([]);
-  const [schedule, setSchedule] = useState<ScheduleEntry[]>([]);
   const [students, setStudents] = useState<SchoolStudent[]>([]);
-  const [lessonRecords, setLessonRecords] = useState<LessonAttendance[]>([]);
+  const [records, setRecords] = useState<LessonAttendance[]>([]);
   const [selectedClass, setSelectedClass] = useState("");
-  const [selectedLessonId, setSelectedLessonId] = useState("");
-  const [selectionMode, setSelectionMode] = useState<"auto" | "manual">("auto");
   const [date, setDate] = useState(todayLocal());
-  const [now, setNow] = useState(new Date());
+  const [schoolSettings, setSchoolSettings] = useState<SchoolSettings | null>(null);
+  const [selectedPeriod, setSelectedPeriod] = useState(1);
   const [statuses, setStatuses] =
     useState<Record<string, LessonAttendanceRecord["status"]>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
-  const [ruleWarnings, setRuleWarnings] = useState<AttendanceRuleViolation[]>([]);
 
-  const teacherName =
-    profile?.role === "teacher" ? profile.displayName : undefined;
+  const load = async () => {
+    if (!profile?.organizationId || !user?.uid) return;
+    setLoading(true);
+    setError("");
 
-  const visibleClasses = useMemo(() => {
-    if (profile?.role !== "teacher" || !assignments.length) {
-      return classes;
-    }
-
-    const codes = new Set(assignments.map((item) => item.classCode));
-    return classes.filter((item) => codes.has(item.code));
-  }, [assignments, classes, profile?.role]);
-
-  const selectedLesson =
-    schedule.find((item) => item.id === selectedLessonId) || null;
-
-  const currentLesson =
-    date === todayLocal()
-      ? getCurrentLesson(schedule, now)
-      : null;
-
-  const selectedClassName =
-    visibleClasses.find((item) => item.code === selectedClass)?.name || "";
-
-  const subjectOptions = assignments.filter(
-    (item) => item.classCode === selectedClass
-  );
-
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(new Date()), 30_000);
-    return () => window.clearInterval(timer);
-  }, []);
-
-  useEffect(() => {
-    if (!profile?.organizationId) return;
-
-    let cancelled = false;
-
-    const load = async () => {
-      setLoading(true);
-      setError("");
-
-      try {
-        const [classItems, assignmentItems] = await Promise.all([
+    try {
+      const [classItems, studentItems, attendanceItems, settings] =
+        await Promise.all([
           getSchoolClasses(profile.organizationId),
-          getTeacherAssignments(
+          selectedClass
+            ? getClassStudents(profile.organizationId, selectedClass)
+            : Promise.resolve([]),
+          getLessonAttendances(
             profile.organizationId,
-            teacherName
+            date,
+            profile.role === "teacher" ? user.uid : undefined
           ),
+          getSchoolSettings(profile.organizationId),
         ]);
 
-        if (cancelled) return;
-
-        setClasses(classItems);
-        setAssignments(assignmentItems);
-
-        const available =
-          profile.role === "teacher" && assignmentItems.length
-            ? classItems.filter((item) =>
-                assignmentItems.some(
-                  (assignment) =>
-                    assignment.classCode === item.code
-                )
-              )
-            : classItems;
-
-        setSelectedClass(
-          (current) =>
-            current ||
-            available[0]?.code ||
-            classItems[0]?.code ||
-            ""
-        );
-      } catch (err) {
-        if (!cancelled) {
-          setError((err as Error)?.message || String(err));
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
+      setClasses(classItems);
+      setSchoolSettings(settings);
+      if (settings?.lessonCount && selectedPeriod > settings.lessonCount) {
+        setSelectedPeriod(1);
       }
-    };
+      const activeClass = selectedClass || classItems[0]?.code || "";
+      if (!selectedClass && activeClass) {
+        setSelectedClass(activeClass);
+      }
 
-    void load();
+      const activeStudents = selectedClass
+        ? studentItems
+        : activeClass
+          ? await getClassStudents(profile.organizationId, activeClass)
+          : [];
 
-    return () => {
-      cancelled = true;
-    };
-  }, [profile?.organizationId, profile?.role, teacherName]);
+      setStudents(activeStudents);
+      setRecords(attendanceItems);
 
-  useEffect(() => {
-    if (!profile?.organizationId || !date) return;
+      const classRecords = attendanceItems.filter(
+        (item) => item.classCode === activeClass
+      );
+      const selectedRecord = classRecords.find(
+        (item) => item.period === selectedPeriod
+      );
+      const latest =
+        selectedRecord ||
+        classRecords
+          .filter((item) => item.period > 0 && item.period < selectedPeriod)
+          .sort((a, b) => b.period - a.period)[0];
 
-    let cancelled = false;
-
-    const day = new Date(date + "T12:00:00").getDay();
-    const dayOfWeek = day === 0 ? 7 : day;
-
-    getSchedule(
-      profile.organizationId,
-      dayOfWeek,
-      teacherName
-    )
-      .then((items) => {
-        if (cancelled) return;
-
-        setSchedule(items);
-        setSelectionMode("auto");
-
-        const autoLesson =
-          date === todayLocal()
-            ? getCurrentLesson(items, new Date())
-            : null;
-
-        setSelectedLessonId(
-          autoLesson?.id ||
-            items[0]?.id ||
-            ""
-        );
-
-        if (autoLesson) {
-          setSelectedClass(autoLesson.classCode);
-        }
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setSchedule([]);
-          setSelectedLessonId("");
-          setError((err as Error)?.message || String(err));
-        }
+      const next: Record<string, LessonAttendanceRecord["status"]> = {};
+      activeStudents.forEach((student) => {
+        next[student.studentNo] = "present";
       });
 
-    return () => {
-      cancelled = true;
-    };
-  }, [date, profile?.organizationId, teacherName]);
+      latest?.records.forEach((record) => {
+        next[record.studentNo] = record.status;
+      });
+
+      setStatuses(next);
+    } catch (err) {
+      setError((err as Error)?.message || String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    if (
-      selectionMode !== "auto" ||
-      date !== todayLocal() ||
-      !schedule.length
-    ) {
-      return;
-    }
-
-    const current = getCurrentLesson(schedule, now);
-    if (current) {
-      setSelectedLessonId(current.id);
-      setSelectedClass(current.classCode);
-    }
-  }, [date, now, schedule, selectionMode]);
-
-  useEffect(() => {
-    if (!profile?.organizationId || !selectedClass || !date) {
-      return;
-    }
-
-    let cancelled = false;
-
-    const load = async () => {
-      setLoading(true);
-      setError("");
-      setMessage("");
-      setRuleWarnings([]);
-
-      try {
-        const teacherUid =
-          profile.role === "teacher" ? user?.uid : undefined;
-
-        const [studentItems, lessonItems, legacy] =
-          await Promise.all([
-            getClassStudents(
-              profile.organizationId,
-              selectedClass
-            ),
-            getLessonAttendances(
-              profile.organizationId,
-              date,
-              teacherUid
-            ),
-            getAttendance(
-              profile.organizationId,
-              selectedClass,
-              date
-            ),
-          ]);
-
-        if (cancelled) return;
-
-        setStudents(studentItems);
-        setLessonRecords(lessonItems);
-
-        const existingLesson = lessonItems.find((item) => {
-          if (selectedLesson) {
-            return (
-              item.classCode === selectedLesson.classCode &&
-              item.period === selectedLesson.period &&
-              item.subjectCode === selectedLesson.subjectCode &&
-              item.teacherUid === user?.uid
-            );
-          }
-
-          return (
-            item.classCode === selectedClass &&
-            item.period === 0 &&
-            item.teacherUid === user?.uid
-          );
-        });
-
-        const existing =
-          existingLesson?.records?.length
-            ? existingLesson.records
-            : legacy;
-
-        const next: Record<
-          string,
-          LessonAttendanceRecord["status"]
-        > = {};
-
-        studentItems.forEach((student) => {
-          next[student.studentNo] = "present";
-        });
-
-        existing.forEach((record) => {
-          next[record.studentNo] =
-            record.status as LessonAttendanceRecord["status"];
-        });
-
-        setStatuses(next);
-        setRuleWarnings(existingLesson?.ruleViolations || []);
-      } catch (err) {
-        if (!cancelled) {
-          setError((err as Error)?.message || String(err));
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-
     void load();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    date,
-    profile?.organizationId,
-    profile?.role,
-    selectedClass,
-    selectedLessonId,
-    user?.uid,
-  ]);
+  }, [profile?.organizationId, profile?.role, user?.uid, selectedClass, date, selectedPeriod]);
 
   const setStatus = (
     studentNo: string,
     status: LessonAttendanceRecord["status"]
   ) => {
-    setStatuses((current) => ({
-      ...current,
-      [studentNo]: status,
-    }));
-    setMessage("");
-  };
+    const previous = records
+      .filter(
+        (item) =>
+          item.classCode === selectedClass &&
+          item.period > 0 &&
+          item.period < selectedPeriod
+      )
+      .sort((a, b) => b.period - a.period)[0]
+      ?.records.find((item) => item.studentNo === studentNo);
 
-  const markAllPresent = () => {
-    const next: Record<
-      string,
-      LessonAttendanceRecord["status"]
-    > = {};
+    setStatuses((current) => ({ ...current, [studentNo]: status }));
 
-    students.forEach((student) => {
-      next[student.studentNo] = "present";
-    });
-
-    setStatuses(next);
-    setRuleWarnings([]);
-    setMessage("");
+    if (previous?.status === "present" && status === "absent") {
+      setMessage(
+        "⚠️ Öğrenci önceki yoklamada Mevcut. Bu işlem ara ders devamsızlığı uyarısı oluşturacaktır."
+      );
+    } else {
+      setMessage("");
+    }
   };
 
   const save = async () => {
-    if (!profile?.organizationId || !user?.uid) return;
-    if (!selectedClass || !students.length) return;
+    if (!profile?.organizationId || !user?.uid || !selectedClass) return;
 
-    const assignment = subjectOptions[0] || null;
+    const className =
+      classes.find((item) => item.code === selectedClass)?.name || "";
 
-    const subjectCode =
-      selectedLesson?.subjectCode ||
-      assignment?.subjectCode ||
-      "manual";
+    const previous = records
+      .filter(
+        (item) =>
+          item.classCode === selectedClass &&
+          item.period > 0 &&
+          item.period < selectedPeriod
+      )
+      .sort((a, b) => b.period - a.period)[0];
 
-    const subjectName =
-      selectedLesson?.subjectName ||
-      assignment?.subjectName ||
-      "Günlük Yoklama";
+    const previousMap = new Map(
+      (previous?.records || []).map((item) => [item.studentNo, item.status])
+    );
 
-    const records = students.map((student) => ({
+    const rows = students.map((student) => ({
       studentNo: student.studentNo,
-      status:
-        statuses[student.studentNo] ||
-        "unknown",
+      status: statuses[student.studentNo] || "unknown",
     }));
 
-    const previousLesson =
-      selectedLesson && selectedLesson.period > 0
-        ? lessonRecords
-            .filter(
-              (item) =>
-                item.classCode ===
-                  (selectedLesson.classCode || selectedClass) &&
-                item.teacherUid === user.uid &&
-                item.period > 0 &&
-                item.period < selectedLesson.period
-            )
-            .sort((a, b) => b.period - a.period)[0]
-        : undefined;
-
-    const violations = evaluateAttendanceRules({
-      currentRecords: records,
-      previousRecords: previousLesson?.records,
-    });
-
-    setRuleWarnings(violations);
-
-    if (records.some((item) => item.status === "unknown")) {
-      setError(
-        "Bilinmiyor durumundaki öğrenciler kaydedilebilir ancak yönetici incelemesi gerekir."
-      );
-    } else if (!violations.length) {
-      setError("");
-    }
+    const intermediateWarnings = rows.filter(
+      (row) =>
+        previousMap.get(row.studentNo) === "present" &&
+        row.status === "absent"
+    );
 
     setSaving(true);
+    setError("");
     setMessage("");
 
     try {
       await saveLessonAttendance({
         organizationId: profile.organizationId,
         date,
-        classCode: selectedLesson?.classCode || selectedClass,
-        className:
-          selectedLesson?.className ||
-          selectedClassName,
-        subjectCode,
-        subjectName,
+        classCode: selectedClass,
+        className,
+        subjectCode: "period-" + selectedPeriod,
+        subjectName: selectedPeriod + ". Ders",
         teacherUid: user.uid,
         teacherName: profile.displayName,
-        period: selectedLesson?.period || 0,
-        records,
-        ruleViolations: violations,
+        period: selectedPeriod,
+        records: rows,
+        ruleViolations: intermediateWarnings.map((row) => ({
+          ruleId: "ARA_DERS_DEVAMSIZLIGI",
+          severity: "critical",
+          studentNo: row.studentNo,
+          message:
+            "Öğrenci önceki yoklamada Mevcut, bu yoklamada Yok olarak işaretlendi.",
+        })),
       });
 
-      const refreshed = await getLessonAttendances(
-        profile.organizationId,
-        date,
-        profile.role === "teacher" ? user.uid : undefined
-      );
-      setLessonRecords(refreshed);
-
       setMessage(
-        violations.length
-          ? "Yoklama kaydedildi. Kural uyarıları yönetici incelemesinde görülebilir."
+        intermediateWarnings.length
+          ? "Yoklama kaydedildi. Ara ders devamsızlığı uyarıları yöneticiye iletildi."
           : "Yoklama kaydedildi ve yönetici incelemesine gönderildi."
       );
+      await load();
     } catch (err) {
       setError((err as Error)?.message || String(err));
     } finally {
@@ -537,21 +344,11 @@ function AttendanceView() {
 
   const counts = students.reduce(
     (acc, student) => {
-      const status =
-        statuses[student.studentNo] || "unknown";
-      acc[status] += 1;
+      const status = statuses[student.studentNo] || "unknown";
+      acc[status] = (acc[status] || 0) + 1;
       return acc;
     },
-    {
-      present: 0,
-      full_day: 0,
-      half_day: 0,
-      late: 0,
-      unknown: 0,
-    } as Record<
-      LessonAttendanceRecord["status"],
-      number
-    >
+    {} as Record<string, number>
   );
 
   return (
@@ -559,27 +356,41 @@ function AttendanceView() {
       <div className="panel-header attendance-header">
         <div>
           <h3>Yoklama</h3>
-          <p>
-            Ders programı aktarılmışsa mevcut ders otomatik seçilir.
-            Program yoksa sınıfı ve dersi elle seçebilirsiniz.
-          </p>
+          <p>Sınıfı manuel seçin. V1 ders programına bağımlı değildir.</p>
         </div>
 
         <div className="attendance-actions">
           <select
-            value={selectedClass}
-            onChange={(e) => {
-              setSelectedClass(e.target.value);
-              setSelectionMode("manual");
-              setSelectedLessonId("");
-            }}
-            disabled={!visibleClasses.length}
+            value={String(selectedPeriod)}
+            onChange={(e) => setSelectedPeriod(Number(e.target.value))}
+            disabled={!schoolSettings?.lessonCount}
+            aria-label="Ders saati"
           >
-            {!visibleClasses.length && (
-              <option value="">Sınıf bulunamadı</option>
+            {schoolSettings?.lessonCount ? (
+              Array.from({ length: schoolSettings.lessonCount }, (_, index) => {
+                const period = index + 1;
+                const slot = schoolSettings.lessonTimes.find((item) => item.period === period);
+                const time = slot?.startTime && slot?.endTime
+                  ? " · " + slot.startTime + "-" + slot.endTime
+                  : "";
+                return (
+                  <option key={period} value={period}>
+                    {period}. Ders{time}
+                  </option>
+                );
+              })
+            ) : (
+              <option value="">Ders saatleri tanımlı değil</option>
             )}
+          </select>
 
-            {visibleClasses.map((item) => (
+          <select
+            value={selectedClass}
+            onChange={(e) => setSelectedClass(e.target.value)}
+            disabled={!classes.length}
+          >
+            {!classes.length && <option value="">Sınıf bulunamadı</option>}
+            {classes.map((item) => (
               <option key={item.code} value={item.code}>
                 {item.name}
               </option>
@@ -589,150 +400,72 @@ function AttendanceView() {
           <input
             type="date"
             value={date}
-            onChange={(e) => {
-              setDate(e.target.value);
-              setSelectionMode("auto");
-            }}
+            onChange={(e) => setDate(e.target.value)}
           />
         </div>
       </div>
 
-      {schedule.length > 0 && (
-        <div className="lesson-strip">
-          {schedule.map((item) => {
-            const isCurrent = currentLesson?.id === item.id;
-
-            return (
-              <button
-                key={item.id}
-                className={
-                  selectedLessonId === item.id
-                    ? "lesson-card active"
-                    : "lesson-card"
-                }
-                onClick={() => {
-                  setSelectionMode("manual");
-                  setSelectedLessonId(item.id);
-                  setSelectedClass(item.classCode);
-                }}
-              >
-                <strong>
-                  {item.period}. Ders
-                  {isCurrent ? " · ŞU AN" : ""}
-                </strong>
-                <span>{item.className}</span>
-                <small>{item.subjectName}</small>
-                {item.startTime && (
-                  <small>
-                    {item.startTime}
-                    {item.endTime
-                      ? " - " + item.endTime
-                      : ""}
-                  </small>
-                )}
-              </button>
-            );
-          })}
+      {!schoolSettings?.lessonCount && (
+        <div className="error-box">
+          Ders sayısı ve ders saatleri henüz tanımlı değil. Önce Ayarlar → Okul Bilgileri bölümünden ders saatlerini kaydedin.
         </div>
       )}
 
-      {!schedule.length && (
-        <div className="info-box">
-          <strong>Ders programı henüz aktarılmamış.</strong>
-          <span>
-            MEB program ekranı açıldığında program aktarımı burada
-            otomatik ders seçimi için kullanılacak.
-          </span>
-        </div>
-      )}
+      <div className="info-box">
+        <strong>Manuel sınıf seçimi</strong>
+        <span>
+          Nöbet, ders değişikliği veya başka bir öğretmenin yerine girme gibi
+          durumlarda öğretmen farklı bir sınıf seçebilir.
+        </span>
+      </div>
 
       <div className="attendance-toolbar">
         <div className="attendance-counts">
-          <span>
-            Toplam <strong>{students.length}</strong>
-          </span>
-          <span className="count-present">
-            Var <strong>{counts.present}</strong>
-          </span>
-          <span className="count-late">
-            Geç <strong>{counts.late}</strong>
-          </span>
-          <span className="count-half">
-            Yarım Gün <strong>{counts.half_day}</strong>
-          </span>
-          <span className="count-full">
-            Tam Gün <strong>{counts.full_day}</strong>
-          </span>
-          <span className="count-unknown">
-            Bilinmiyor <strong>{counts.unknown}</strong>
-          </span>
+          <span>Toplam <strong>{students.length}</strong></span>
+          <span className="count-present">Var <strong>{counts.present || 0}</strong></span>
+          <span className="count-late">Geç <strong>{counts.late || 0}</strong></span>
+          <span className="count-full">Yok <strong>{counts.absent || 0}</strong></span>
+          <span className="count-unknown">Bilinmiyor <strong>{counts.unknown || 0}</strong></span>
         </div>
 
         <button
           className="secondary"
-          onClick={markAllPresent}
+          onClick={() =>
+            setStatuses(Object.fromEntries(
+              students.map((student) => [student.studentNo, "present"])
+            ))
+          }
           disabled={!students.length}
         >
           Herkesi Var Yap
         </button>
       </div>
 
-      {ruleWarnings.length > 0 && (
-        <div className="rule-warning">
-          <strong>{ruleWarnings.length} kural uyarısı</strong>
-          <div>
-            {ruleWarnings.slice(0, 6).map((warning, index) => (
-              <div key={warning.ruleId + "-" + warning.studentNo + "-" + index}>
-                Öğrenci {warning.studentNo}: {warning.message}
-              </div>
-            ))}
-            {ruleWarnings.length > 6 && (
-              <div>+ {ruleWarnings.length - 6} uyarı daha</div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {error && (
-        <div className="error-box attendance-error">
-          {error}
-        </div>
-      )}
-
-      {message && (
-        <div className="success-box">
-          {message}
-        </div>
-      )}
+      {error && <div className="error-box attendance-error">{error}</div>}
+      {message && <div className="success-box">{message}</div>}
 
       <div className="student-table-wrap">
         <table className="student-table">
           <thead>
-            <tr>
-              <th>No</th>
-              <th>Öğrenci</th>
-              <th>Durum</th>
-            </tr>
+            <tr><th>No</th><th>Öğrenci</th><th>Durum</th></tr>
           </thead>
-
           <tbody>
             {students.map((student) => {
-              const status =
-                statuses[student.studentNo] || "unknown";
+              const status = statuses[student.studentNo] || "unknown";
+              const options: Array<[LessonAttendanceRecord["status"], string]> = [
+                ["present", "Var"],
+                ["absent", "Yok"],
+                ["late", "Geç"],
+                ["unknown", "Bilinmiyor"],
+              ];
 
               return (
                 <tr key={student.id}>
                   <td>{student.studentNo}</td>
-                  <td>
-                    <strong>{student.name}</strong>
-                  </td>
+                  <td><strong>{student.name}</strong></td>
                   <td>
                     <div className="status-buttons">
-                      {(
-                        Object.keys(
-                          lessonStatusLabels
-                        ) as LessonAttendanceRecord["status"][]
-                      ).map((item) => (
+                      {options.map(([item, label]) => (
                         <button
                           key={item}
                           className={
@@ -740,14 +473,9 @@ function AttendanceView() {
                               ? "attendance-status active " + item
                               : "attendance-status " + item
                           }
-                          onClick={() =>
-                            setStatus(
-                              student.studentNo,
-                              item
-                            )
-                          }
+                          onClick={() => setStatus(student.studentNo, item)}
                         >
-                          {lessonStatusLabels[item]}
+                          {label}
                         </button>
                       ))}
                     </div>
@@ -769,19 +497,16 @@ function AttendanceView() {
 
       <div className="attendance-footer">
         <span>
-          {students.length
-            ? selectionMode === "auto" && currentLesson
-              ? "Mevcut ders otomatik seçildi."
-              : "Değişiklikleri kaydetmeye hazır."
-            : "Önce bir sınıf seçin."}
+          {loading
+            ? "Veriler yükleniyor..."
+            : "Gönderildiğinde kayıt yönetici incelemesine düşer."}
         </span>
-
         <button
           className="primary"
           onClick={save}
-          disabled={saving || !students.length}
+          disabled={saving || !students.length || !schoolSettings?.lessonCount}
         >
-          {saving ? "Kaydediliyor..." : "Yoklamayı Kaydet"}
+          {saving ? "Gönderiliyor..." : "Yoklamayı Gönder"}
         </button>
       </div>
     </section>
@@ -947,34 +672,53 @@ function DashboardView({
 
 function ReviewView() {
   const { profile, user } = useAuth();
-  const [records, setRecords] =
-    useState<LessonAttendance[]>([]);
+  const [classes, setClasses] = useState<SchoolClass[]>([]);
+  const [students, setStudents] = useState<SchoolStudent[]>([]);
+  const [lessons, setLessons] = useState<LessonAttendance[]>([]);
+  const [daily, setDaily] = useState<DailyAttendanceStudent[]>([]);
+  const [selectedClass, setSelectedClass] = useState("");
+  const [date, setDate] = useState(todayLocal());
+  const [report, setReport] = useState<Awaited<ReturnType<typeof getDailyReport>>>(null);
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState("");
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [reason, setReason] = useState<Record<string, string>>({});
 
   const load = async () => {
     if (!profile?.organizationId) return;
-
     setLoading(true);
+    setError("");
 
     try {
-      const items = await getLessonAttendances(
-        profile.organizationId,
-        todayLocal()
-      );
+      const classItems = await getSchoolClasses(profile.organizationId);
+      const [studentGroups, lessonItems, dailyItems, reportItem] =
+        await Promise.all([
+          selectedClass
+            ? getClassStudents(profile.organizationId, selectedClass)
+            : Promise.all(
+                classItems.map((item) =>
+                  getClassStudents(profile.organizationId, item.code)
+                )
+              ).then((groups) => groups.flat()),
+          getLessonAttendances(profile.organizationId, date),
+          getDailyAttendance(
+            profile.organizationId,
+            date,
+            selectedClass || undefined
+          ),
+          getDailyReport(profile.organizationId, date),
+        ]);
 
-      setRecords(
-        items.filter(
-          (item) =>
-            item.reviewStatus !== "approved"
-        )
-      );
+      setClasses(classItems);
+      const studentItems = Array.isArray(studentGroups)
+        ? studentGroups
+        : [];
+      setStudents(studentItems);
+      setLessons(lessonItems);
+      setDaily(dailyItems);
+      setReport(reportItem);
     } catch (err) {
-      setError(
-        (err as Error)?.message ||
-          String(err)
-      );
+      setError((err as Error)?.message || String(err));
     } finally {
       setLoading(false);
     }
@@ -982,133 +726,467 @@ function ReviewView() {
 
   useEffect(() => {
     void load();
-  }, [profile?.organizationId]);
+  }, [profile?.organizationId, selectedClass, date]);
 
-  const review = async (
-    item: LessonAttendance,
-    status: "approved" | "needs_review"
-  ) => {
-    if (!profile?.organizationId || !user?.uid) return;
-
-    setBusy(item.id);
+  const calculate = async () => {
+    if (!profile?.organizationId) return;
+    setBusy(true);
     setError("");
 
     try {
-      await reviewLessonAttendance(
+      const classItems = await getSchoolClasses(profile.organizationId);
+      const allStudents = selectedClass
+        ? await getClassStudents(profile.organizationId, selectedClass)
+        : (
+            await Promise.all(
+              classItems.map((item) =>
+                getClassStudents(profile.organizationId, item.code)
+              )
+            )
+          ).flat();
+      const allLessons = await getLessonAttendances(
         profile.organizationId,
-        item.id,
-        user.uid,
-        status
+        date
       );
+
+      await calculateAndSaveDailyAttendance({
+        organizationId: profile.organizationId,
+        date,
+        students: allStudents,
+        lessonAttendances: allLessons,
+      });
 
       await load();
     } catch (err) {
-      setError(
-        (err as Error)?.message ||
-          String(err)
-      );
+      setError((err as Error)?.message || String(err));
     } finally {
-      setBusy("");
+      setBusy(false);
     }
   };
+
+  const override = async (
+    item: DailyAttendanceStudent,
+    result: DailySystemResult
+  ) => {
+    if (!profile?.organizationId || !user?.uid) return;
+    const explanation =
+      reason[item.id]?.trim() || "Yönetici tarafından manuel düzeltildi.";
+
+    setBusy(true);
+    setError("");
+
+    try {
+      await overrideDailyAttendance({
+        organizationId: profile.organizationId,
+        dailyAttendanceId: item.id,
+        adminId: user.uid,
+        result,
+        reason: explanation,
+      });
+      await load();
+    } catch (err) {
+      setError((err as Error)?.message || String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const approve = async () => {
+    if (!profile?.organizationId || !user?.uid) return;
+    if (!window.confirm(
+      "Gün sonu raporu onaylanacak, kilitlenecek ve onaylanan sonuçlar e-Okul aktarım kuyruğuna alınacak. Devam edilsin mi?"
+    )) return;
+
+    setBusy(true);
+    setError("");
+
+    try {
+      await approveDailyReport(profile.organizationId, date, user.uid);
+      await load();
+    } catch (err) {
+      setError((err as Error)?.message || String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const visibleDaily = daily.filter(
+    (item) => !selectedClass || item.classCode === selectedClass
+  );
+
+  const periods = Array.from(
+    new Set(lessons.map((lesson) => lesson.period).filter(Boolean))
+  ).sort((a, b) => a - b);
+
+  const lessonByKey = new Map(
+    lessons.map((lesson) => [
+      lesson.classCode + "__" + lesson.period,
+      lesson,
+    ])
+  );
+
+  const statusShort = (status?: LessonAttendanceRecord["status"]) =>
+    ({
+      present: "V",
+      absent: "Y",
+      full_day: "T",
+      half_day: "½",
+      late: "G",
+      unknown: "?",
+    }[status || "unknown"]);
+
+  const statusTitle = (status?: LessonAttendanceRecord["status"]) =>
+    ({
+      present: "Var",
+      absent: "Yok",
+      full_day: "Tam Gün",
+      half_day: "Yarım Gün",
+      late: "Geç",
+      unknown: "Bilinmiyor",
+    }[status || "unknown"]);
+
+  const getStudentLessonStatus = (
+    item: DailyAttendanceStudent,
+    period: number
+  ) => {
+    const lesson = lessonByKey.get(item.classCode + "__" + period);
+    return lesson?.records.find(
+      (record) => record.studentNo === item.studentNo
+    )?.status;
+  };
+
+  return (
+    <section className="panel review-panel">
+      <div className="panel-header">
+        <div>
+          <h3>Gün Sonu Yönetim Merkezi</h3>
+          <p>
+            Sınıf, öğrenci ve ders bazındaki tüm yoklama sonuçlarını tek tabloda
+            karşılaştırın ve gün sonu kararını verin.
+          </p>
+        </div>
+        <span className="status-badge">
+          {report?.locked
+            ? "KİLİTLİ"
+            : report?.status === "approved"
+            ? "ONAYLI"
+            : "TASLAK"}
+        </span>
+      </div>
+
+      <div className="attendance-actions">
+        <select
+          value={selectedClass}
+          onChange={(e) => setSelectedClass(e.target.value)}
+        >
+          <option value="">Tüm Sınıflar</option>
+          {classes.map((item) => (
+            <option key={item.code} value={item.code}>
+              {item.name}
+            </option>
+          ))}
+        </select>
+        <input
+          type="date"
+          value={date}
+          onChange={(e) => setDate(e.target.value)}
+        />
+        <button className="secondary" onClick={calculate} disabled={busy}>
+          {busy ? "Hesaplanıyor..." : "Gün Sonunu Hesapla"}
+        </button>
+        <button
+          className="primary"
+          onClick={approve}
+          disabled={busy || !daily.length || Boolean(report?.locked)}
+        >
+          Gün Sonunu Onayla ve Kilitle
+        </button>
+      </div>
+
+      {error && <div className="error-box attendance-error">{error}</div>}
+
+      {!loading && !visibleDaily.length && (
+        <div className="empty-state compact">
+          <strong>Henüz günlük sonuç oluşturulmadı.</strong>
+          <p>
+            Önce öğretmen yoklamalarının gelmesini bekleyin ve “Gün Sonunu
+            Hesapla” düğmesine basın.
+          </p>
+        </div>
+      )}
+
+      {visibleDaily.length > 0 && (
+        <div className="review-table-wrap">
+          <table className="review-table">
+            <thead>
+              <tr>
+                <th className="class-col">Sınıf</th>
+                <th className="student-col">Öğrenci</th>
+                {periods.map((period) => {
+                  const lesson = selectedClass
+                    ? lessonByKey.get(selectedClass + "__" + period)
+                    : lessons.find((item) => item.period === period);
+
+                  return (
+                    <th key={period} className="period-col">
+                      <span>{period}. Ders</span>
+                      <small>
+                        {lesson?.subjectName || "Ders bilgisi bekleniyor"}
+                      </small>
+                    </th>
+                  );
+                })}
+                <th className="result-col">Sistem</th>
+                <th className="result-col">Nihai</th>
+                <th className="action-col">İşlem</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleDaily.map((item) => (
+                <tr key={item.id}>
+                  <td className="class-cell">{item.className}</td>
+                  <td className="student-cell">
+                    <strong>{item.studentName}</strong>
+                    <small>No: {item.studentNo}</small>
+                    {item.hasIntermediateAbsence && (
+                      <em>🚨 Ara ders</em>
+                    )}
+                  </td>
+
+                  {periods.map((period) => {
+                    const status = getStudentLessonStatus(item, period);
+                    return (
+                      <td key={period} className="period-cell">
+                        <span
+                          className={"attendance-dot status-" + (status || "unknown")}
+                          title={statusTitle(status)}
+                        >
+                          {statusShort(status)}
+                        </span>
+                        {!status && <small>—</small>}
+                      </td>
+                    );
+                  })}
+
+                  <td>
+                    <span className="table-result">
+                      {dailyResultLabel(item.systemResult)}
+                    </span>
+                  </td>
+                  <td>
+                    <span className="table-result final">
+                      {dailyResultLabel(item.finalResult)}
+                    </span>
+                  </td>
+                  <td>
+                    {!report?.locked ? (
+                      <div className="table-actions">
+                        <input
+                          placeholder="Gerekçe"
+                          value={reason[item.id] || ""}
+                          onChange={(e) =>
+                            setReason((current) => ({
+                              ...current,
+                              [item.id]: e.target.value,
+                            }))
+                          }
+                        />
+                        <div>
+                          <button
+                            className="secondary"
+                            disabled={busy}
+                            onClick={() => void override(item, "present")}
+                          >
+                            Var
+                          </button>
+                          <button
+                            className="secondary"
+                            disabled={busy}
+                            onClick={() => void override(item, "half_day")}
+                          >
+                            Yarım
+                          </button>
+                          <button
+                            className="secondary"
+                            disabled={busy}
+                            onClick={() => void override(item, "full_day")}
+                          >
+                            Tam
+                          </button>
+                          <button
+                            className="secondary"
+                            disabled={busy}
+                            onClick={() => void override(item, "late")}
+                          >
+                            Geç
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <span className="locked-cell">🔒 Kilitli</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {visibleDaily.length > 0 && (
+        <div className="review-legend">
+          <span><b>V</b> Var</span>
+          <span><b>Y</b> Yok</span>
+          <span><b>G</b> Geç</span>
+          <span><b>?</b> Bilinmiyor</span>
+          <span><b>½</b> Yarım Gün</span>
+          <span className="legend-alert">🚨 Ara ders devamsızlığı</span>
+        </div>
+      )}
+
+      <div className="review-footer">
+        <span>
+          {visibleDaily.length} öğrenci · {periods.length} ders sütunu ·{" "}
+          {lessons.length} öğretmen yoklaması
+        </span>
+        <button
+          className="primary"
+          onClick={approve}
+          disabled={busy || !daily.length || Boolean(report?.locked)}
+        >
+          Gün Sonunu Onayla ve Kilitle
+        </button>
+      </div>
+    </section>
+
+  );
+}
+
+function dailyResultLabel(value: DailySystemResult) {
+  return {
+    present: "Mevcut",
+    half_day: "Yarım Gün",
+    full_day: "Tam Gün",
+    late: "Geç",
+    unknown: "Bilinmiyor",
+  }[value];
+}
+
+function ParentView() {
+  const { profile, user } = useAuth();
+  const [children, setChildren] = useState<SchoolStudent[]>([]);
+  const [selectedChild, setSelectedChild] = useState("");
+  const [date, setDate] = useState(todayLocal());
+  const [daily, setDaily] = useState<DailyAttendanceStudent[]>([]);
+  const [notifications, setNotifications] = useState<
+    Awaited<ReturnType<typeof getParentNotifications>>
+  >([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!profile?.organizationId || !user?.uid) return;
+
+    const load = async () => {
+      setLoading(true);
+      try {
+        const [childItems, notificationItems] = await Promise.all([
+          getParentChildren(profile.organizationId, user.uid),
+          getParentNotifications(profile.organizationId, user.uid),
+        ]);
+        setChildren(childItems);
+        setSelectedChild((current) => current || childItems[0]?.id || "");
+        setNotifications(notificationItems);
+      } catch (err) {
+        setError((err as Error)?.message || String(err));
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    void load();
+  }, [profile?.organizationId, user?.uid]);
+
+  useEffect(() => {
+    if (!profile?.organizationId || !selectedChild) return;
+    getParentDailyAttendance(
+      profile.organizationId,
+      selectedChild,
+      date
+    ).then(setDaily).catch((err) => setError((err as Error)?.message || String(err)));
+  }, [profile?.organizationId, selectedChild, date]);
+
+  if (loading) {
+    return <section className="panel"><strong>Veli verileri yükleniyor...</strong></section>;
+  }
 
   return (
     <section className="panel">
       <div className="panel-header">
         <div>
-          <h3>Gün Sonu İnceleme</h3>
-          <p>
-            Bugünkü öğretmen yoklamalarını kontrol
-            edin ve onaylayın.
-          </p>
+          <h3>Veli Merkezi</h3>
+          <p>Çocuğunuzun doğrulanmış günlük yoklama durumlarını görüntüleyin.</p>
         </div>
-
-        <span className="status-badge">
-          {records.length} bekleyen
-        </span>
       </div>
 
-      {error && (
-        <div className="error-box attendance-error">
-          {error}
+      {error && <div className="error-box">{error}</div>}
+
+      {!children.length && (
+        <div className="empty-state compact">
+          <strong>Henüz öğrenci eşleştirmesi yapılmamış.</strong>
         </div>
       )}
 
-      <div className="review-list">
-        {loading && (
-          <div className="empty-state compact">
-            <strong>Kayıtlar yükleniyor...</strong>
-          </div>
-        )}
-
-        {!loading && !records.length && (
-          <div className="empty-state compact">
-            <div className="empty-icon">✓</div>
-            <strong>Bekleyen yoklama yok.</strong>
-            <p>
-              Bugünkü kayıtlar incelenmiş durumda.
-            </p>
-          </div>
-        )}
-
-        {records.map((item) => {
-          const unknownCount =
-            item.records.filter(
-              (record) =>
-                record.status === "unknown"
-            ).length;
-
-          return (
-            <article
-              className="review-card"
-              key={item.id}
+      {children.length > 0 && (
+        <>
+          <div className="attendance-actions">
+            <select
+              value={selectedChild}
+              onChange={(e) => setSelectedChild(e.target.value)}
             >
-              <div>
-                <strong>
-                  {item.className}
-                </strong>
-                <span>
-                  {item.subjectName || "Günlük Yoklama"}
-                  {item.period
-                    ? " · " + item.period + ". ders"
-                    : ""}
-                </span>
-                <small>
-                  {item.teacherName} ·{" "}
-                  {item.records.length} öğrenci
-                  {unknownCount
-                    ? " · " +
-                      unknownCount +
-                      " bilinmiyor"
-                    : ""}
-                </small>
-              </div>
+              {children.map((child) => (
+                <option key={child.id} value={child.id}>
+                  {child.name} · {child.className}
+                </option>
+              ))}
+            </select>
+            <input
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+            />
+          </div>
 
-              <div className="review-actions">
-                <button
-                  className="secondary"
-                  disabled={busy === item.id}
-                  onClick={() =>
-                    review(item, "needs_review")
-                  }
-                >
-                  İnceleme İste
-                </button>
-
-                <button
-                  className="primary dark-button"
-                  disabled={busy === item.id}
-                  onClick={() =>
-                    review(item, "approved")
-                  }
-                >
-                  Onayla
-                </button>
+          <div className="review-list">
+            {daily.map((item) => (
+              <article className="review-card" key={item.id}>
+                <div>
+                  <strong>{item.studentName}</strong>
+                  <span>{item.className} · {formatDate(item.date)}</span>
+                  <small>Günlük sonuç: <b>{dailyResultLabel(item.finalResult)}</b></small>
+                </div>
+              </article>
+            ))}
+            {!daily.length && (
+              <div className="empty-state compact">
+                <strong>Bugün için onaylanmış günlük sonuç yok.</strong>
               </div>
-            </article>
-          );
-        })}
-      </div>
+            )}
+          </div>
+
+          <h4>Bildirimler</h4>
+          <div className="review-list">
+            {notifications.map((notification) => (
+              <article className="review-card" key={notification.id}>
+                <div>
+                  <strong>{notification.title}</strong>
+                  <span>{notification.message}</span>
+                </div>
+              </article>
+            ))}
+          </div>
+        </>
+      )}
     </section>
   );
 }
@@ -1855,6 +1933,601 @@ function AcademicView() {
   );
 }
 
+
+function SchoolSettingsView() {
+  const { profile, user } = useAuth();
+  const [lessonCount, setLessonCount] = useState(8);
+  const [dayStartTime, setDayStartTime] = useState("08:30");
+  const [lessonDurationMinutes, setLessonDurationMinutes] = useState(40);
+  const [breakDurationMinutes, setBreakDurationMinutes] = useState(10);
+  const [lunchEnabled, setLunchEnabled] = useState(true);
+  const [lunchDurationMinutes, setLunchDurationMinutes] = useState(45);
+  const [lunchAfterPeriod, setLunchAfterPeriod] = useState(4);
+  const [lessonTimes, setLessonTimes] =
+    useState<SchoolSettings["lessonTimes"]>([]);
+  const [source, setSource] =
+    useState<SchoolSettings["source"]>("manual");
+  const [settingsTab, setSettingsTab] =
+    useState<"general" | "lessons" | "classes" | "other">("lessons");
+  const [schoolClasses, setSchoolClasses] = useState<SchoolClass[]>([]);
+  const [classesLoading, setClassesLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  const addMinutes = (time: string, minutes: number) => {
+    const [hours, mins] = time.split(":").map(Number);
+    const total = hours * 60 + mins + minutes;
+    const normalized = ((total % 1440) + 1440) % 1440;
+    return (
+      String(Math.floor(normalized / 60)).padStart(2, "0") +
+      ":" +
+      String(normalized % 60).padStart(2, "0")
+    );
+  };
+
+  const buildLessonTimes = (
+    options?: Partial<{
+      lessonCount: number;
+      dayStartTime: string;
+      lessonDurationMinutes: number;
+      breakDurationMinutes: number;
+      lunchEnabled: boolean;
+      lunchDurationMinutes: number;
+      lunchAfterPeriod: number;
+    }>
+  ): SchoolSettings["lessonTimes"] => {
+    const nextLessonCount = options?.lessonCount ?? lessonCount;
+    const nextDayStartTime = options?.dayStartTime ?? dayStartTime;
+    const nextLessonDuration = options?.lessonDurationMinutes ?? lessonDurationMinutes;
+    const nextBreakDuration = options?.breakDurationMinutes ?? breakDurationMinutes;
+    const nextLunchEnabled = options?.lunchEnabled ?? lunchEnabled;
+    const nextLunchDuration = options?.lunchDurationMinutes ?? lunchDurationMinutes;
+    const nextLunchAfterPeriod = options?.lunchAfterPeriod ?? lunchAfterPeriod;
+
+    const generated: SchoolSettings["lessonTimes"] = [];
+    let cursor = nextDayStartTime;
+
+    for (let period = 1; period <= nextLessonCount; period += 1) {
+      const startTime = cursor;
+      const endTime = addMinutes(startTime, nextLessonDuration);
+      generated.push({ period, startTime, endTime });
+
+      if (period < nextLessonCount) {
+        const pause =
+          nextLunchEnabled && period === nextLunchAfterPeriod
+            ? nextLunchDuration
+            : nextBreakDuration;
+        cursor = addMinutes(endTime, pause);
+      }
+    }
+
+    return generated;
+  };
+
+  const generateLessonTimes = () => {
+    setLessonTimes(buildLessonTimes());
+    setMessage("Ders saatleri otomatik oluşturuldu.");
+    setError("");
+  };
+
+  const load = async () => {
+    if (!profile?.organizationId) return;
+    setLoading(true);
+    setError("");
+
+    try {
+      const settings = await getSchoolSettings(profile.organizationId);
+
+      if (settings) {
+        setLessonCount(settings.lessonCount || 8);
+        setDayStartTime(
+          settings.dayStartTime ||
+            settings.lessonTimes[0]?.startTime ||
+            "08:30"
+        );
+        setLessonDurationMinutes(
+          settings.lessonDurationMinutes || 40
+        );
+        setBreakDurationMinutes(
+          settings.breakDurationMinutes ?? 10
+        );
+        setLunchEnabled(settings.lunchEnabled !== false);
+        setLunchDurationMinutes(
+          settings.lunchDurationMinutes ?? 45
+        );
+        setLunchAfterPeriod(
+          settings.lunchAfterPeriod || 4
+        );
+        setLessonTimes(settings.lessonTimes || []);
+        setSource(settings.source || "manual");
+      } else {
+        setLessonTimes([]);
+      }
+    } catch (err) {
+      setError((err as Error)?.message || String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void load();
+  }, [profile?.organizationId]);
+
+  useEffect(() => {
+    if (settingsTab !== "classes" || !profile?.organizationId) return;
+    setClassesLoading(true);
+    getSchoolClasses(profile.organizationId)
+      .then(setSchoolClasses)
+      .catch((err) => setError((err as Error)?.message || String(err)))
+      .finally(() => setClassesLoading(false));
+  }, [settingsTab, profile?.organizationId]);
+
+  const changeCount = (value: number) => {
+    const nextCount = Math.max(1, Math.min(20, value || 1));
+    setLessonCount(nextCount);
+    setLunchAfterPeriod((current) =>
+      Math.min(current, Math.max(nextCount - 1, 1))
+    );
+  };
+
+  const save = async () => {
+    if (!profile?.organizationId || !user?.uid || !lessonCount) return;
+
+    setSaving(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const timesToSave = buildLessonTimes();
+      setLessonTimes(timesToSave);
+
+      await saveSchoolSettings({
+        organizationId: profile.organizationId,
+        lessonCount,
+        dayStartTime,
+        lessonDurationMinutes,
+        breakDurationMinutes,
+        lunchEnabled,
+        lunchDurationMinutes,
+        lunchAfterPeriod: lunchEnabled ? lunchAfterPeriod : 0,
+        lessonTimes: timesToSave,
+        updatedBy: user.uid,
+        source: "manual",
+      });
+
+      setSource("manual");
+      setMessage("Okul ders saati ayarları kaydedildi.");
+      await load();
+    } catch (err) {
+      setError((err as Error)?.message || String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const regenerate = () => {
+    const times = buildLessonTimes();
+    setLessonTimes(times);
+    setMessage("Tablo yeni ayarlara göre güncellendi.");
+    setError("");
+  };
+
+  return (
+    <section className="settings-page">
+      <div className="settings-heading">
+        <div>
+          <span className="eyebrow">AYARLAR</span>
+          <h2>Okul Bilgileri</h2>
+          <p>
+            Okulunuza ait temel bilgileri ve ders saati düzenini yönetin.
+          </p>
+        </div>
+
+        <span className="settings-source">
+          <span className="settings-source-dot" />
+          {source === "e-okul" ? "e-Okul'dan alındı" : "Manuel ayar"}
+        </span>
+      </div>
+
+      <div className="settings-tabs" aria-label="Okul ayarları">
+        <button type="button" className={settingsTab === "general" ? "active" : ""} onClick={() => setSettingsTab("general")}>Genel Bilgiler</button>
+        <button type="button" className={settingsTab === "lessons" ? "active" : ""} onClick={() => setSettingsTab("lessons")}><span>◷</span> Ders Saati Ayarları</button>
+        <button type="button" className={settingsTab === "classes" ? "active" : ""} onClick={() => setSettingsTab("classes")}>Sınıflar</button>
+        <button type="button" className={settingsTab === "other" ? "active" : ""} onClick={() => setSettingsTab("other")}>⚙ Diğer Ayarlar</button>
+      </div>
+
+      {loading && (
+        <div className="settings-message info-box">
+          <span>Okul ayarları yükleniyor...</span>
+        </div>
+      )}
+
+      {error && <div className="settings-message error-box">{error}</div>}
+      {message && (
+        <div className="settings-message success-box">{message}</div>
+      )}
+
+      {!loading && settingsTab === "general" && (
+        <div className="settings-info-grid">
+          <section className="settings-card">
+            <div className="settings-card-header"><div className="settings-card-icon">⌂</div><div><h3>Okul ve Hesap Bilgileri</h3><p>MEVCUT'ta kullanılan kurum ve yönetici bilgileri.</p></div></div>
+            <div className="settings-detail-list">
+              <div><span>Organizasyon</span><strong>{profile?.organizationId || "—"}</strong></div>
+              <div><span>Kullanıcı</span><strong>{profile?.displayName || user?.email || "—"}</strong></div>
+              <div><span>Rol</span><strong>{profile?.role === "admin" ? "Yönetici" : profile?.role || "—"}</strong></div>
+              <div><span>Ders sayısı</span><strong>{lessonCount} ders</strong></div>
+            </div>
+          </section>
+          <section className="settings-card">
+            <div className="settings-card-header"><div className="settings-card-icon">✓</div><div><h3>Gün Sonu Akışı</h3><p>Yoklama verisinin sistemde izlediği süreç.</p></div></div>
+            <div className="settings-flow"><span>Öğretmen yoklaması</span><b>→</b><span>Gün sonu</span><b>→</b><span>Yönetici onayı</span><b>→</b><span>e-Okul</span></div>
+          </section>
+        </div>
+      )}
+
+      {!loading && settingsTab === "classes" && (
+        <section className="settings-card settings-classes-card">
+          <div className="settings-card-header"><div className="settings-card-icon">▦</div><div><h3>Sınıflar</h3><p>Sistemde tanımlı sınıf ve şubeler.</p></div><span className="preview-count">{schoolClasses.length} sınıf</span></div>
+          {classesLoading ? <div className="settings-empty">Sınıflar yükleniyor...</div> : !schoolClasses.length ? <div className="settings-empty">Henüz sınıf bulunmuyor. Entegrasyon Merkezi'nden e-Okul verilerini aktarabilirsiniz.</div> : <div className="class-settings-grid">{schoolClasses.map((item) => <div className="class-setting-item" key={item.code}><strong>{item.name}</strong><span>{item.code}</span></div>)}</div>}
+        </section>
+      )}
+
+      {!loading && settingsTab === "other" && (
+        <div className="settings-info-grid">
+          <section className="settings-card">
+            <div className="settings-card-header"><div className="settings-card-icon">⚙</div><div><h3>Sistem Ayarları</h3><p>V1'de sabit çalışan sistem davranışları.</p></div></div>
+            <div className="settings-detail-list">
+              <div><span>Gün sonu onayı</span><strong>Yönetici zorunlu</strong></div>
+              <div><span>e-Okul aktarımı</span><strong>Onay sonrası</strong></div>
+              <div><span>Öğretmen sınıf seçimi</span><strong>Manuel</strong></div>
+              <div><span>Ders programı otomasyonu</span><strong>V1'de pasif</strong></div>
+            </div>
+          </section>
+          <section className="settings-card">
+            <div className="settings-card-header"><div className="settings-card-icon">🔔</div><div><h3>Bildirimler</h3><p>Veli bildirimleri mevcut bildirim altyapısından yönetilir.</p></div></div>
+            <div className="settings-help"><strong>ℹ</strong><span>Burada henüz değiştirilebilir bir seçenek yok; sahte ayar eklemedim.</span></div>
+          </section>
+        </div>
+      )}
+
+      {!loading && settingsTab === "lessons" && (
+        <div className="settings-layout">
+          <section className="settings-card settings-form-card">
+            <div className="settings-card-header">
+              <div className="settings-card-icon">◷</div>
+              <div>
+                <h3>Ders Saati Ayarları</h3>
+                <p>
+                  Ders düzenini belirleyin, saat tablosu otomatik oluşsun.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="settings-eokul-button"
+                disabled
+                title="e-Okul ders saati entegrasyonu sonraki sürümde"
+              >
+                ↓ e-Okul'dan Al
+              </button>
+            </div>
+
+            <div className="settings-help">
+              <strong>ℹ Otomatik hesaplama</strong>
+              <span>
+                Bu ayarlarla okulunuzun tüm ders saatleri otomatik
+                hesaplanır. Ayarları değiştirdiğinizde tabloyu yeniden
+                oluşturabilirsiniz.
+              </span>
+            </div>
+
+            <div className="settings-form-grid">
+              <label className="settings-field">
+                <span>1. Ders Başlangıç Saati</span>
+                <div className="settings-input-wrap">
+                  <span>◷</span>
+                  <input
+                    type="time"
+                    value={dayStartTime}
+                    onChange={(e) => setDayStartTime(e.target.value)}
+                  />
+                </div>
+              </label>
+
+              <label className="settings-field">
+                <span>Ders Sayısı</span>
+                <div className="settings-input-wrap">
+                  <span>▥</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={20}
+                    value={lessonCount}
+                    onChange={(e) =>
+                      changeCount(Number(e.target.value))
+                    }
+                  />
+                </div>
+              </label>
+
+              <label className="settings-field">
+                <span>Ders Süresi <em>(dakika)</em></span>
+                <div className="settings-input-wrap">
+                  <span>◷</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={180}
+                    value={lessonDurationMinutes}
+                    onChange={(e) =>
+                      setLessonDurationMinutes(Number(e.target.value))
+                    }
+                  />
+                </div>
+              </label>
+
+              <label className="settings-field">
+                <span>Teneffüs Süresi <em>(dakika)</em></span>
+                <div className="settings-input-wrap">
+                  <span>☕</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={120}
+                    value={breakDurationMinutes}
+                    onChange={(e) =>
+                      setBreakDurationMinutes(Number(e.target.value))
+                    }
+                  />
+                </div>
+              </label>
+            </div>
+
+            <div
+              className={
+                lunchEnabled
+                  ? "lunch-settings enabled"
+                  : "lunch-settings"
+              }
+            >
+              <div className="lunch-header">
+                <div>
+                  <strong>Öğle Arası</strong>
+                  <span>Öğle arası uygulanacak mı?</span>
+                </div>
+
+                <label className="switch">
+                  <input
+                    type="checkbox"
+                    checked={lunchEnabled}
+                    onChange={(e) => setLunchEnabled(e.target.checked)}
+                  />
+                  <span className="switch-track" />
+                  <b>{lunchEnabled ? "Uygulanacak" : "Yok"}</b>
+                </label>
+              </div>
+
+              {lunchEnabled ? (
+                <div className="lunch-grid">
+                  <label className="settings-field">
+                    <span>Öğle Arası Hangi Dersten Sonra?</span>
+                    <div className="settings-input-wrap">
+                      <span>▥</span>
+                      <select
+                        value={lunchAfterPeriod}
+                        onChange={(e) =>
+                          setLunchAfterPeriod(Number(e.target.value))
+                        }
+                      >
+                        {Array.from(
+                          { length: Math.max(lessonCount - 1, 1) },
+                          (_, index) => index + 1
+                        ).map((period) => (
+                          <option key={period} value={period}>
+                            {period}. dersten sonra
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </label>
+
+                  <label className="settings-field">
+                    <span>Öğle Arası Süresi <em>(dakika)</em></span>
+                    <div className="settings-input-wrap">
+                      <span>🍴</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={180}
+                        value={lunchDurationMinutes}
+                        onChange={(e) =>
+                          setLunchDurationMinutes(Number(e.target.value))
+                        }
+                      />
+                    </div>
+                  </label>
+                </div>
+              ) : (
+                <div className="lunch-disabled-note">
+                  Öğle arası kapalı. Tüm ders aralarında yalnızca teneffüs
+                  süresi kullanılacak.
+                </div>
+              )}
+            </div>
+
+            <div className="settings-actions">
+              <button
+                type="button"
+                className="secondary settings-reset"
+                onClick={() => {
+                  setDayStartTime("08:30");
+                  setLessonCount(8);
+                  setLessonDurationMinutes(40);
+                  setBreakDurationMinutes(10);
+                  setLunchEnabled(true);
+                  setLunchDurationMinutes(45);
+                  setLunchAfterPeriod(4);
+                  setLessonTimes(
+                    buildLessonTimes({
+                      dayStartTime: "08:30",
+                      lessonCount: 8,
+                      lessonDurationMinutes: 40,
+                      breakDurationMinutes: 10,
+                      lunchEnabled: true,
+                      lunchDurationMinutes: 45,
+                      lunchAfterPeriod: 4,
+                    })
+                  );
+                  setMessage("Varsayılan değerler yüklendi.");
+                }}
+              >
+                ↻ Varsayılanları Yükle
+              </button>
+
+              <button
+                type="button"
+                className="primary settings-generate"
+                onClick={regenerate}
+              >
+                ▣ Ders Saatlerini Oluştur
+              </button>
+            </div>
+          </section>
+
+          <section className="settings-card settings-preview-card">
+            <div className="settings-card-header preview-header">
+              <div className="settings-card-icon">▣</div>
+              <div>
+                <h3>Oluşacak Ders Programı</h3>
+                <p>
+                  Ayarlarınıza göre hesaplanan ders ve teneffüs saatleri.
+                </p>
+              </div>
+              <span className="preview-count">
+                {lessonCount} Ders
+                {lunchEnabled ? " · 1 Öğle Arası" : ""}
+              </span>
+            </div>
+
+            <div className="schedule-table-wrap">
+              <table className="schedule-table">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Tür</th>
+                    <th>Başlangıç</th>
+                    <th>Bitiş</th>
+                    <th>Süre</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lessonTimes.length ? (
+                    lessonTimes.flatMap((item) => {
+                      const rows = [
+                        <tr key={"lesson-" + item.period}>
+                          <td>{item.period}</td>
+                          <td>
+                            <span className="schedule-type lesson">
+                              ▫ {item.period}. Ders
+                            </span>
+                          </td>
+                          <td>{item.startTime}</td>
+                          <td>{item.endTime}</td>
+                          <td>{lessonDurationMinutes} dk</td>
+                        </tr>,
+                      ];
+
+                      if (item.period < lessonCount) {
+                        const isLunch =
+                          lunchEnabled &&
+                          item.period === lunchAfterPeriod;
+                        rows.push(
+                          <tr
+                            key={"pause-" + item.period}
+                            className={isLunch ? "lunch-row" : ""}
+                          >
+                            <td>—</td>
+                            <td>
+                              <span
+                                className={
+                                  isLunch
+                                    ? "schedule-type lunch"
+                                    : "schedule-type break"
+                                }
+                              >
+                                {isLunch ? "🍴 Öğle Arası" : "☕ Teneffüs"}
+                              </span>
+                            </td>
+                            <td>{item.endTime}</td>
+                            <td>
+                              {addMinutes(
+                                item.endTime,
+                                isLunch
+                                  ? lunchDurationMinutes
+                                  : breakDurationMinutes
+                              )}
+                            </td>
+                            <td>
+                              {isLunch
+                                ? lunchDurationMinutes
+                                : breakDurationMinutes}{" "}
+                              dk
+                            </td>
+                          </tr>
+                        );
+                      }
+
+                      return rows;
+                    })
+                  ) : (
+                    <tr>
+                      <td colSpan={5} className="schedule-empty">
+                        Ders saatlerini oluşturmak için soldaki ayarları
+                        doldurun.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="preview-footer">
+              <span>
+                Öğle arası kapalıysa tabloda öğle arası satırı oluşturulmaz.
+              </span>
+              <button
+                type="button"
+                className="secondary"
+                onClick={regenerate}
+              >
+                ✎ Tabloyu Yenile
+              </button>
+            </div>
+
+            <div className="settings-save-bar">
+              <span>
+                {source === "e-okul"
+                  ? "e-Okul kaynaklı saatler yüklendi."
+                  : "Değişiklikleri kaydettiğinizde yoklama ekranına uygulanır."}
+              </span>
+              <button
+                type="button"
+                className="primary"
+                onClick={save}
+                disabled={saving || !lessonCount}
+              >
+                {saving ? "Kaydediliyor..." : "Okul Bilgilerini Kaydet"}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+    </section>
+  );
+}
+
 export default function App() {
   const {
     user,
@@ -1916,18 +2589,21 @@ export default function App() {
           "Entegrasyon",
           "Ayarlar",
         ]
-      : [
-          "Ana Sayfa",
-          "Yoklama",
-          "Geçmiş",
-          "Dersler",
-          "Entegrasyon",
-          "Ayarlar",
-        ];
+      : profile.role === "parent"
+        ? ["Ana Sayfa", "Veli Merkezi", "Ayarlar"]
+        : [
+            "Ana Sayfa",
+            "Yoklama",
+            "Geçmiş",
+            "Entegrasyon",
+            "Ayarlar",
+          ];
 
   let content;
 
-  if (active === "Yoklama") {
+  if (active === "Veli Merkezi") {
+    content = <ParentView />;
+  } else if (active === "Yoklama") {
     content = <AttendanceView />;
   } else if (active === "Gün Sonu") {
     content = <ReviewView />;
@@ -1939,42 +2615,44 @@ export default function App() {
     content = <IntegrationCenterView />;
   } else if (active === "Ayarlar") {
     content = (
-      <section className="panel">
-        <div className="panel-header">
-          <div>
-            <h3>Ayarlar</h3>
-            <p>
-              Hesap ve okul ayarları.
-            </p>
+      <>
+        {profile.role === "admin" && <SchoolSettingsView />}
+        <section className="panel">
+          <div className="panel-header">
+            <div>
+              <h3>Hesap</h3>
+              <p>Oturum ve kullanıcı bilgileri.</p>
+            </div>
           </div>
-        </div>
 
-        <div className="empty-state compact">
-          <strong>
-            {profile.displayName}
-          </strong>
-          <p>
-            {profile.email} ·{" "}
-            {profile.role === "admin"
-              ? "Yönetici"
-              : "Öğretmen"}
-          </p>
+          <div className="empty-state compact">
+            <strong>{profile.displayName}</strong>
+            <p>
+              {profile.email} ·{" "}
+              {profile.role === "admin"
+                ? "Yönetici"
+                : profile.role === "parent"
+                  ? "Veli"
+                  : "Öğretmen"}
+            </p>
 
-          <button
-            className="secondary"
-            onClick={() => void logout()}
-          >
-            Çıkış Yap
-          </button>
-        </div>
-      </section>
+            <button
+              className="secondary"
+              onClick={() => void logout()}
+            >
+              Çıkış Yap
+            </button>
+          </div>
+        </section>
+      </>
     );
   } else {
-    content = (
-      <DashboardView
-        onNavigate={setActive}
-      />
-    );
+    content =
+      profile.role === "parent" ? (
+        <ParentView />
+      ) : (
+        <DashboardView onNavigate={setActive} />
+      );
   }
 
   return (
@@ -2022,7 +2700,9 @@ export default function App() {
             <div className="user-chip">
               {profile.role === "admin"
                 ? "Yönetici"
-                : "Öğretmen"}
+                : profile.role === "parent"
+                  ? "Veli"
+                  : "Öğretmen"}
             </div>
 
             <button

@@ -70,8 +70,12 @@ service cloud.firestore {
         && data.teacherUid == request.auth.uid;
     }
 
+    // V1'de öğretmen sınıfı manuel seçebilir (nöbet, ders değişikliği,
+    // başka öğretmenin yerine girme vb.). Yetki, aynı okul + kendi kullanıcı
+    // hesabı + onaylanmamış kayıt ile sınırlandırılır.
     function teacherCanWriteAttendance(data) {
-      return teacherHasSubjectAccess(data)
+      return isTeacher()
+        && data.organizationId == currentUser().data.organizationId
         && data.teacherUid == request.auth.uid;
     }
 
@@ -160,6 +164,24 @@ service cloud.firestore {
         if adminSameOrg(
           request.resource.data
         );
+
+      allow delete:
+        if adminSameOrg(resource.data);
+    }
+
+
+    match /schoolSettings/{settingsId} {
+      allow get:
+        if (
+          sameOrg(resource.data)
+          || (
+            (isAdmin() || isTeacher())
+            && settingsId == currentUser().data.organizationId
+          )
+        );
+
+      allow create, update:
+        if adminSameOrg(request.resource.data);
 
       allow delete:
         if adminSameOrg(resource.data);
@@ -310,6 +332,63 @@ service cloud.firestore {
         if isAdmin()
         && resource.data.organizationId ==
            currentUser().data.organizationId;
+
+      allow create:
+        if adminSameOrg(request.resource.data);
+
+      allow update:
+        if adminSameOrg(request.resource.data);
+
+      allow delete:
+        if adminSameOrg(resource.data);
+    }
+
+
+    match /dailyAttendance/{dailyAttendanceId} {
+      allow get:
+        if adminSameOrg(resource.data)
+        || isParentOfStudent(resource.data.studentId);
+
+      allow list:
+        if adminSameOrg(resource.data)
+        || isParentOfStudent(resource.data.studentId);
+
+      allow create, update:
+        if adminSameOrg(request.resource.data);
+
+      allow delete:
+        if adminSameOrg(resource.data);
+    }
+
+
+    match /dailyReports/{reportId} {
+      allow read:
+        if adminSameOrg(resource.data);
+
+      allow create, update:
+        if adminSameOrg(request.resource.data);
+
+      allow delete:
+        if adminSameOrg(resource.data);
+    }
+
+
+    match /notifications/{notificationId} {
+      allow get:
+        if adminSameOrg(resource.data)
+        || (
+          isParent()
+          && resource.data.organizationId == currentUser().data.organizationId
+          && resource.data.recipientUid == request.auth.uid
+        );
+
+      allow list:
+        if adminSameOrg(resource.data)
+        || (
+          isParent()
+          && resource.data.organizationId == currentUser().data.organizationId
+          && resource.data.recipientUid == request.auth.uid
+        );
 
       allow create:
         if adminSameOrg(request.resource.data);
