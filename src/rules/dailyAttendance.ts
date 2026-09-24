@@ -79,9 +79,14 @@ export function calculateDailyResult(
 export function hasIntermediateAbsence(
   recordsByPeriod: Array<{ period: number; status: LessonAttendanceRecord["status"] }>
 ) {
-  const ordered = [...recordsByPeriod]
-    .filter((item) => item.period > 0)
-    .sort((a, b) => a.period - b.period);
+  const allManual = recordsByPeriod.length > 0 &&
+    recordsByPeriod.every((item) => item.period === 0);
+
+  const ordered = allManual
+    ? [...recordsByPeriod]
+    : [...recordsByPeriod]
+        .filter((item) => item.period > 0)
+        .sort((a, b) => a.period - b.period);
 
   for (let i = 1; i < ordered.length; i += 1) {
     if (
