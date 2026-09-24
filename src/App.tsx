@@ -1856,20 +1856,38 @@ function SchoolSettingsView() {
     );
   };
 
-  const buildLessonTimes = (): SchoolSettings["lessonTimes"] => {
-    const generated: SchoolSettings["lessonTimes"] = [];
-    let cursor = dayStartTime;
+  const buildLessonTimes = (
+    options?: Partial<{
+      lessonCount: number;
+      dayStartTime: string;
+      lessonDurationMinutes: number;
+      breakDurationMinutes: number;
+      lunchEnabled: boolean;
+      lunchDurationMinutes: number;
+      lunchAfterPeriod: number;
+    }>
+  ): SchoolSettings["lessonTimes"] => {
+    const nextLessonCount = options?.lessonCount ?? lessonCount;
+    const nextDayStartTime = options?.dayStartTime ?? dayStartTime;
+    const nextLessonDuration = options?.lessonDurationMinutes ?? lessonDurationMinutes;
+    const nextBreakDuration = options?.breakDurationMinutes ?? breakDurationMinutes;
+    const nextLunchEnabled = options?.lunchEnabled ?? lunchEnabled;
+    const nextLunchDuration = options?.lunchDurationMinutes ?? lunchDurationMinutes;
+    const nextLunchAfterPeriod = options?.lunchAfterPeriod ?? lunchAfterPeriod;
 
-    for (let period = 1; period <= lessonCount; period += 1) {
+    const generated: SchoolSettings["lessonTimes"] = [];
+    let cursor = nextDayStartTime;
+
+    for (let period = 1; period <= nextLessonCount; period += 1) {
       const startTime = cursor;
-      const endTime = addMinutes(startTime, lessonDurationMinutes);
+      const endTime = addMinutes(startTime, nextLessonDuration);
       generated.push({ period, startTime, endTime });
 
-      if (period < lessonCount) {
+      if (period < nextLessonCount) {
         const pause =
-          lunchEnabled && period === lunchAfterPeriod
-            ? lunchDurationMinutes
-            : breakDurationMinutes;
+          nextLunchEnabled && period === nextLunchAfterPeriod
+            ? nextLunchDuration
+            : nextBreakDuration;
         cursor = addMinutes(endTime, pause);
       }
     }
@@ -2038,9 +2056,9 @@ function SchoolSettingsView() {
             <div className="settings-help">
               <strong>ℹ Otomatik hesaplama</strong>
               <span>
-                Bu ayarlarla okulunuzun tüm ders saatleri hesaplanır.
-                İsterseniz oluşan tabloyu daha sonra manuel olarak
-                düzenleyebilirsiniz.
+                Bu ayarlarla okulunuzun tüm ders saatleri otomatik
+                hesaplanır. Ayarları değiştirdiğinizde tabloyu yeniden
+                oluşturabilirsiniz.
               </span>
             </div>
 
@@ -2190,7 +2208,17 @@ function SchoolSettingsView() {
                   setLunchEnabled(true);
                   setLunchDurationMinutes(45);
                   setLunchAfterPeriod(4);
-                  setLessonTimes(buildLessonTimes());
+                  setLessonTimes(
+                    buildLessonTimes({
+                      dayStartTime: "08:30",
+                      lessonCount: 8,
+                      lessonDurationMinutes: 40,
+                      breakDurationMinutes: 10,
+                      lunchEnabled: true,
+                      lunchDurationMinutes: 45,
+                      lunchAfterPeriod: 4,
+                    })
+                  );
                   setMessage("Varsayılan değerler yüklendi.");
                 }}
               >
