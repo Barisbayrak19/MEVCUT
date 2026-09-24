@@ -1026,8 +1026,7 @@ function ReviewView() {
         <div className="eod-mini-kpi gray"><strong>{reviewCount}</strong><span>İncelenecek</span></div>
       </div>
 
-      <div className="eod-main-grid">
-        <section className="eod-card eod-classes-card">
+      <section className="eod-card eod-classes-card">
           <div className="eod-card-header">
             <div>
               <h3>Sınıflar</h3>
@@ -1115,7 +1114,6 @@ function ReviewView() {
             )}
           </div>
         </section>
-      </section>
 
       {detailClass && (
         <section className="eod-card eod-detail-card">
