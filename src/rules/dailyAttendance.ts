@@ -86,13 +86,13 @@ export function hasIntermediateAbsence(
   for (let i = 1; i < ordered.length; i += 1) {
     if (
       ordered[i - 1].status === "present" &&
-      ordered[i].status === "absent" || ordered[i].status === "full_day"
+      (ordered[i].status === "absent" || ordered[i].status === "full_day")
     ) {
       return true;
     }
     if (
       ordered[i - 1].status === "present" &&
-      ordered[i].status === "absent" || ordered[i].status === "half_day"
+      (ordered[i].status === "absent" || ordered[i].status === "half_day")
     ) {
       return true;
     }
