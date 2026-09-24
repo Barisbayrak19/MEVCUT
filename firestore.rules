@@ -171,8 +171,14 @@ service cloud.firestore {
 
 
     match /schoolSettings/{settingsId} {
-      allow read:
-        if sameOrg(resource.data);
+      allow get:
+        if (
+          sameOrg(resource.data)
+          || (
+            signedIn()
+            && settingsId == currentUser().data.organizationId
+          )
+        );
 
       allow create, update:
         if adminSameOrg(request.resource.data);
