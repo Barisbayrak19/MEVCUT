@@ -175,7 +175,7 @@ service cloud.firestore {
         if (
           sameOrg(resource.data)
           || (
-            signedIn()
+            (isAdmin() || isTeacher())
             && settingsId == currentUser().data.organizationId
           )
         );
