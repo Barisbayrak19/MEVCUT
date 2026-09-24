@@ -170,6 +170,18 @@ service cloud.firestore {
     }
 
 
+    match /schoolSettings/{settingsId} {
+      allow read:
+        if sameOrg(resource.data);
+
+      allow create, update:
+        if adminSameOrg(request.resource.data);
+
+      allow delete:
+        if adminSameOrg(resource.data);
+    }
+
+
     match /teacherAssignments/{assignmentId} {
       allow read:
         if adminSameOrg(resource.data)
