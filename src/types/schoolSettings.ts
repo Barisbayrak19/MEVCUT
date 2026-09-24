@@ -10,6 +10,7 @@ export interface SchoolSettings {
   dayStartTime: string;
   lessonDurationMinutes: number;
   breakDurationMinutes: number;
+  lunchEnabled: boolean;
   lunchDurationMinutes: number;
   lunchAfterPeriod: number;
   lessonTimes: LessonTime[];
