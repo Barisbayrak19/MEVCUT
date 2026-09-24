@@ -70,8 +70,12 @@ service cloud.firestore {
         && data.teacherUid == request.auth.uid;
     }
 
+    // V1'de öğretmen sınıfı manuel seçebilir (nöbet, ders değişikliği,
+    // başka öğretmenin yerine girme vb.). Yetki, aynı okul + kendi kullanıcı
+    // hesabı + onaylanmamış kayıt ile sınırlandırılır.
     function teacherCanWriteAttendance(data) {
-      return teacherHasSubjectAccess(data)
+      return isTeacher()
+        && data.organizationId == currentUser().data.organizationId
         && data.teacherUid == request.auth.uid;
     }
 
