@@ -7,6 +7,11 @@ export interface LessonTime {
 export interface SchoolSettings {
   organizationId: string;
   lessonCount: number;
+  dayStartTime: string;
+  lessonDurationMinutes: number;
+  breakDurationMinutes: number;
+  lunchDurationMinutes: number;
+  lunchAfterPeriod: number;
   lessonTimes: LessonTime[];
   source: "manual" | "e-okul";
   updatedBy?: string;
