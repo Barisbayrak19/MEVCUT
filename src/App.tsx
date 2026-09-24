@@ -1850,7 +1850,7 @@ function SchoolSettingsView() {
       String(normalized % 60).padStart(2, "0");
   };
 
-  const generateLessonTimes = () => {
+  const buildLessonTimes = (): SchoolSettings["lessonTimes"] => {
     const generated: SchoolSettings["lessonTimes"] = [];
     let cursor = dayStartTime;
 
@@ -1867,7 +1867,11 @@ function SchoolSettingsView() {
       }
     }
 
-    setLessonTimes(generated);
+    return generated;
+  };
+
+  const generateLessonTimes = () => {
+    setLessonTimes(buildLessonTimes());
     setMessage("Ders saatleri otomatik oluşturuldu.");
     setError("");
   };
@@ -1915,9 +1919,13 @@ function SchoolSettingsView() {
     setError("");
     setMessage("");
     try {
-      if (lessonTimes.length !== lessonCount) {
-        generateLessonTimes();
-      }
+      const timesToSave =
+        lessonTimes.length === lessonCount
+          ? lessonTimes
+          : buildLessonTimes();
+
+      setLessonTimes(timesToSave);
+
       await saveSchoolSettings({
         organizationId: profile.organizationId,
         lessonCount,
@@ -1926,7 +1934,7 @@ function SchoolSettingsView() {
         breakDurationMinutes,
         lunchDurationMinutes,
         lunchAfterPeriod,
-        lessonTimes: lessonTimes.length === lessonCount ? lessonTimes : undefined,
+        lessonTimes: timesToSave,
         updatedBy: user.uid,
         source: "manual",
       });
