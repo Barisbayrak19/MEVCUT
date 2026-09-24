@@ -85,6 +85,9 @@ export interface EOkulQueueItem {
   id: string;
   organizationId: string;
   attendanceId: string;
+  dailyAttendanceId?: string;
+  date?: string;
+  classCode?: string;
   status: "pending" | "processing" | "completed" | "failed";
   attempts: number;
   lastError?: string;
