@@ -1833,10 +1833,13 @@ function SchoolSettingsView() {
   const [dayStartTime, setDayStartTime] = useState("08:30");
   const [lessonDurationMinutes, setLessonDurationMinutes] = useState(40);
   const [breakDurationMinutes, setBreakDurationMinutes] = useState(10);
+  const [lunchEnabled, setLunchEnabled] = useState(true);
   const [lunchDurationMinutes, setLunchDurationMinutes] = useState(45);
   const [lunchAfterPeriod, setLunchAfterPeriod] = useState(4);
-  const [lessonTimes, setLessonTimes] = useState<SchoolSettings["lessonTimes"]>([]);
-  const [source, setSource] = useState<SchoolSettings["source"]>("manual");
+  const [lessonTimes, setLessonTimes] =
+    useState<SchoolSettings["lessonTimes"]>([]);
+  const [source, setSource] =
+    useState<SchoolSettings["source"]>("manual");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -1846,8 +1849,11 @@ function SchoolSettingsView() {
     const [hours, mins] = time.split(":").map(Number);
     const total = hours * 60 + mins + minutes;
     const normalized = ((total % 1440) + 1440) % 1440;
-    return String(Math.floor(normalized / 60)).padStart(2, "0") + ":" +
-      String(normalized % 60).padStart(2, "0");
+    return (
+      String(Math.floor(normalized / 60)).padStart(2, "0") +
+      ":" +
+      String(normalized % 60).padStart(2, "0")
+    );
   };
 
   const buildLessonTimes = (): SchoolSettings["lessonTimes"] => {
@@ -1860,9 +1866,10 @@ function SchoolSettingsView() {
       generated.push({ period, startTime, endTime });
 
       if (period < lessonCount) {
-        const pause = period === lunchAfterPeriod
-          ? lunchDurationMinutes
-          : breakDurationMinutes;
+        const pause =
+          lunchEnabled && period === lunchAfterPeriod
+            ? lunchDurationMinutes
+            : breakDurationMinutes;
         cursor = addMinutes(endTime, pause);
       }
     }
@@ -1880,15 +1887,30 @@ function SchoolSettingsView() {
     if (!profile?.organizationId) return;
     setLoading(true);
     setError("");
+
     try {
       const settings = await getSchoolSettings(profile.organizationId);
+
       if (settings) {
         setLessonCount(settings.lessonCount || 8);
-        setDayStartTime(settings.dayStartTime || settings.lessonTimes[0]?.startTime || "08:30");
-        setLessonDurationMinutes(settings.lessonDurationMinutes || 40);
-        setBreakDurationMinutes(settings.breakDurationMinutes ?? 10);
-        setLunchDurationMinutes(settings.lunchDurationMinutes ?? 45);
-        setLunchAfterPeriod(settings.lunchAfterPeriod || 4);
+        setDayStartTime(
+          settings.dayStartTime ||
+            settings.lessonTimes[0]?.startTime ||
+            "08:30"
+        );
+        setLessonDurationMinutes(
+          settings.lessonDurationMinutes || 40
+        );
+        setBreakDurationMinutes(
+          settings.breakDurationMinutes ?? 10
+        );
+        setLunchEnabled(settings.lunchEnabled !== false);
+        setLunchDurationMinutes(
+          settings.lunchDurationMinutes ?? 45
+        );
+        setLunchAfterPeriod(
+          settings.lunchAfterPeriod || 4
+        );
         setLessonTimes(settings.lessonTimes || []);
         setSource(settings.source || "manual");
       } else {
@@ -1909,21 +1931,19 @@ function SchoolSettingsView() {
     const nextCount = Math.max(1, Math.min(20, value || 1));
     setLessonCount(nextCount);
     setLunchAfterPeriod((current) =>
-      Math.min(current, Math.max(nextCount - 1, 0))
+      Math.min(current, Math.max(nextCount - 1, 1))
     );
   };
 
   const save = async () => {
     if (!profile?.organizationId || !user?.uid || !lessonCount) return;
+
     setSaving(true);
     setError("");
     setMessage("");
-    try {
-      const timesToSave =
-        lessonTimes.length === lessonCount
-          ? lessonTimes
-          : buildLessonTimes();
 
+    try {
+      const timesToSave = buildLessonTimes();
       setLessonTimes(timesToSave);
 
       await saveSchoolSettings({
@@ -1932,12 +1952,14 @@ function SchoolSettingsView() {
         dayStartTime,
         lessonDurationMinutes,
         breakDurationMinutes,
+        lunchEnabled,
         lunchDurationMinutes,
-        lunchAfterPeriod,
+        lunchAfterPeriod: lunchEnabled ? lunchAfterPeriod : 0,
         lessonTimes: timesToSave,
         updatedBy: user.uid,
         source: "manual",
       });
+
       setSource("manual");
       setMessage("Okul ders saati ayarları kaydedildi.");
       await load();
@@ -1948,132 +1970,370 @@ function SchoolSettingsView() {
     }
   };
 
+  const regenerate = () => {
+    const times = buildLessonTimes();
+    setLessonTimes(times);
+    setMessage("Tablo yeni ayarlara göre güncellendi.");
+    setError("");
+  };
+
   return (
-    <section className="panel">
-      <div className="panel-header">
+    <section className="settings-page">
+      <div className="settings-heading">
         <div>
-          <h3>Okul Bilgileri · Ders Saatleri</h3>
+          <span className="eyebrow">AYARLAR</span>
+          <h2>Okul Bilgileri</h2>
           <p>
-            Ders süresi, teneffüs ve öğle arasını girin; ders saat tablosu otomatik oluşsun.
+            Okulunuza ait temel bilgileri ve ders saati düzenini yönetin.
           </p>
         </div>
-        <span className="status-badge">
-          {source === "e-okul" ? "e-Okul'dan alındı" : "Manuel"}
+
+        <span className="settings-source">
+          <span className="settings-source-dot" />
+          {source === "e-okul" ? "e-Okul'dan alındı" : "Manuel ayar"}
         </span>
       </div>
 
-      {loading && <div className="info-box"><span>Okul ayarları yükleniyor...</span></div>}
-      {error && <div className="error-box">{error}</div>}
-      {message && <div className="success-box">{message}</div>}
+      <div className="settings-tabs" aria-label="Okul ayarları">
+        <button type="button">Genel Bilgiler</button>
+        <button type="button" className="active">
+          <span>◷</span> Ders Saati Ayarları
+        </button>
+        <button type="button">Sınıflar</button>
+        <button type="button">⚙ Diğer Ayarlar</button>
+      </div>
+
+      {loading && (
+        <div className="settings-message info-box">
+          <span>Okul ayarları yükleniyor...</span>
+        </div>
+      )}
+
+      {error && <div className="settings-message error-box">{error}</div>}
+      {message && (
+        <div className="settings-message success-box">{message}</div>
+      )}
 
       {!loading && (
-        <>
-          <div className="form-grid">
-            <label>
-              1. ders başlangıç saati
-              <input
-                type="time"
-                value={dayStartTime}
-                onChange={(e) => setDayStartTime(e.target.value)}
-              />
-            </label>
-
-            <label>
-              Ders sayısı
-              <input
-                type="number"
-                min={1}
-                max={20}
-                value={lessonCount}
-                onChange={(e) => changeCount(Number(e.target.value))}
-              />
-            </label>
-
-            <label>
-              Ders süresi (dk)
-              <input
-                type="number"
-                min={1}
-                max={180}
-                value={lessonDurationMinutes}
-                onChange={(e) => setLessonDurationMinutes(Number(e.target.value))}
-              />
-            </label>
-
-            <label>
-              Teneffüs süresi (dk)
-              <input
-                type="number"
-                min={0}
-                max={120}
-                value={breakDurationMinutes}
-                onChange={(e) => setBreakDurationMinutes(Number(e.target.value))}
-              />
-            </label>
-
-            <label>
-              Öğle arası süresi (dk)
-              <input
-                type="number"
-                min={0}
-                max={180}
-                value={lunchDurationMinutes}
-                onChange={(e) => setLunchDurationMinutes(Number(e.target.value))}
-              />
-            </label>
-
-            <label>
-              Öğle arası hangi dersten sonra?
-              <select
-                value={lunchAfterPeriod}
-                onChange={(e) => setLunchAfterPeriod(Number(e.target.value))}
+        <div className="settings-layout">
+          <section className="settings-card settings-form-card">
+            <div className="settings-card-header">
+              <div className="settings-card-icon">◷</div>
+              <div>
+                <h3>Ders Saati Ayarları</h3>
+                <p>
+                  Ders düzenini belirleyin, saat tablosu otomatik oluşsun.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="settings-eokul-button"
+                disabled
+                title="e-Okul ders saati entegrasyonu sonraki sürümde"
               >
-                {Array.from(
-                  { length: Math.max(lessonCount - 1, 0) },
-                  (_, index) => index + 1
-                ).map((period) => (
-                  <option key={period} value={period}>
-                    {period}. dersten sonra
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
+                ↓ e-Okul'dan Al
+              </button>
+            </div>
 
-          <div className="attendance-footer">
-            <span>Değişiklikleri uygulamadan önce tabloyu yeniden oluşturun.</span>
-            <button className="secondary" onClick={generateLessonTimes}>
-              Ders Saatlerini Oluştur
-            </button>
-          </div>
+            <div className="settings-help">
+              <strong>ℹ Otomatik hesaplama</strong>
+              <span>
+                Bu ayarlarla okulunuzun tüm ders saatleri hesaplanır.
+                İsterseniz oluşan tabloyu daha sonra manuel olarak
+                düzenleyebilirsiniz.
+              </span>
+            </div>
 
-          <div className="history-list">
-            {lessonTimes.map((item) => (
-              <article className="history-card" key={item.period}>
-                <div>
-                  <strong>{item.period}. Ders</strong>
-                  <small>{item.startTime} — {item.endTime}</small>
+            <div className="settings-form-grid">
+              <label className="settings-field">
+                <span>1. Ders Başlangıç Saati</span>
+                <div className="settings-input-wrap">
+                  <span>◷</span>
+                  <input
+                    type="time"
+                    value={dayStartTime}
+                    onChange={(e) => setDayStartTime(e.target.value)}
+                  />
                 </div>
-                {item.period < lessonCount && (
-                  <span className="status-badge">
-                    {item.period === lunchAfterPeriod
-                      ? "Öğle arası"
-                      : "Teneffüs"}
-                  </span>
-                )}
-              </article>
-            ))}
-          </div>
+              </label>
 
-          <div className="attendance-footer">
-            <span>
-              e-Okul'dan saatler geldiğinde bu alan otomatik doldurulabilecek.
-            </span>
-            <button className="primary" onClick={save} disabled={saving || !lessonCount}>
-              {saving ? "Kaydediliyor..." : "Okul Bilgilerini Kaydet"}
-            </button>
-          </div>
-        </>
+              <label className="settings-field">
+                <span>Ders Sayısı</span>
+                <div className="settings-input-wrap">
+                  <span>▥</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={20}
+                    value={lessonCount}
+                    onChange={(e) =>
+                      changeCount(Number(e.target.value))
+                    }
+                  />
+                </div>
+              </label>
+
+              <label className="settings-field">
+                <span>Ders Süresi <em>(dakika)</em></span>
+                <div className="settings-input-wrap">
+                  <span>◷</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={180}
+                    value={lessonDurationMinutes}
+                    onChange={(e) =>
+                      setLessonDurationMinutes(Number(e.target.value))
+                    }
+                  />
+                </div>
+              </label>
+
+              <label className="settings-field">
+                <span>Teneffüs Süresi <em>(dakika)</em></span>
+                <div className="settings-input-wrap">
+                  <span>☕</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={120}
+                    value={breakDurationMinutes}
+                    onChange={(e) =>
+                      setBreakDurationMinutes(Number(e.target.value))
+                    }
+                  />
+                </div>
+              </label>
+            </div>
+
+            <div
+              className={
+                lunchEnabled
+                  ? "lunch-settings enabled"
+                  : "lunch-settings"
+              }
+            >
+              <div className="lunch-header">
+                <div>
+                  <strong>Öğle Arası</strong>
+                  <span>Öğle arası uygulanacak mı?</span>
+                </div>
+
+                <label className="switch">
+                  <input
+                    type="checkbox"
+                    checked={lunchEnabled}
+                    onChange={(e) => setLunchEnabled(e.target.checked)}
+                  />
+                  <span className="switch-track" />
+                  <b>{lunchEnabled ? "Uygulanacak" : "Yok"}</b>
+                </label>
+              </div>
+
+              {lunchEnabled ? (
+                <div className="lunch-grid">
+                  <label className="settings-field">
+                    <span>Öğle Arası Hangi Dersten Sonra?</span>
+                    <div className="settings-input-wrap">
+                      <span>▥</span>
+                      <select
+                        value={lunchAfterPeriod}
+                        onChange={(e) =>
+                          setLunchAfterPeriod(Number(e.target.value))
+                        }
+                      >
+                        {Array.from(
+                          { length: Math.max(lessonCount - 1, 1) },
+                          (_, index) => index + 1
+                        ).map((period) => (
+                          <option key={period} value={period}>
+                            {period}. dersten sonra
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </label>
+
+                  <label className="settings-field">
+                    <span>Öğle Arası Süresi <em>(dakika)</em></span>
+                    <div className="settings-input-wrap">
+                      <span>🍴</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={180}
+                        value={lunchDurationMinutes}
+                        onChange={(e) =>
+                          setLunchDurationMinutes(Number(e.target.value))
+                        }
+                      />
+                    </div>
+                  </label>
+                </div>
+              ) : (
+                <div className="lunch-disabled-note">
+                  Öğle arası kapalı. Tüm ders aralarında yalnızca teneffüs
+                  süresi kullanılacak.
+                </div>
+              )}
+            </div>
+
+            <div className="settings-actions">
+              <button
+                type="button"
+                className="secondary settings-reset"
+                onClick={() => {
+                  setDayStartTime("08:30");
+                  setLessonCount(8);
+                  setLessonDurationMinutes(40);
+                  setBreakDurationMinutes(10);
+                  setLunchEnabled(true);
+                  setLunchDurationMinutes(45);
+                  setLunchAfterPeriod(4);
+                  setLessonTimes(buildLessonTimes());
+                  setMessage("Varsayılan değerler yüklendi.");
+                }}
+              >
+                ↻ Varsayılanları Yükle
+              </button>
+
+              <button
+                type="button"
+                className="primary settings-generate"
+                onClick={regenerate}
+              >
+                ▣ Ders Saatlerini Oluştur
+              </button>
+            </div>
+          </section>
+
+          <section className="settings-card settings-preview-card">
+            <div className="settings-card-header preview-header">
+              <div className="settings-card-icon">▣</div>
+              <div>
+                <h3>Oluşacak Ders Programı</h3>
+                <p>
+                  Ayarlarınıza göre hesaplanan ders ve teneffüs saatleri.
+                </p>
+              </div>
+              <span className="preview-count">
+                {lessonCount} Ders
+                {lunchEnabled ? " · 1 Öğle Arası" : ""}
+              </span>
+            </div>
+
+            <div className="schedule-table-wrap">
+              <table className="schedule-table">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Tür</th>
+                    <th>Başlangıç</th>
+                    <th>Bitiş</th>
+                    <th>Süre</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lessonTimes.length ? (
+                    lessonTimes.flatMap((item) => {
+                      const rows = [
+                        <tr key={"lesson-" + item.period}>
+                          <td>{item.period}</td>
+                          <td>
+                            <span className="schedule-type lesson">
+                              ▫ {item.period}. Ders
+                            </span>
+                          </td>
+                          <td>{item.startTime}</td>
+                          <td>{item.endTime}</td>
+                          <td>{lessonDurationMinutes} dk</td>
+                        </tr>,
+                      ];
+
+                      if (item.period < lessonCount) {
+                        const isLunch =
+                          lunchEnabled &&
+                          item.period === lunchAfterPeriod;
+                        rows.push(
+                          <tr
+                            key={"pause-" + item.period}
+                            className={isLunch ? "lunch-row" : ""}
+                          >
+                            <td>—</td>
+                            <td>
+                              <span
+                                className={
+                                  isLunch
+                                    ? "schedule-type lunch"
+                                    : "schedule-type break"
+                                }
+                              >
+                                {isLunch ? "🍴 Öğle Arası" : "☕ Teneffüs"}
+                              </span>
+                            </td>
+                            <td>{item.endTime}</td>
+                            <td>
+                              {addMinutes(
+                                item.endTime,
+                                isLunch
+                                  ? lunchDurationMinutes
+                                  : breakDurationMinutes
+                              )}
+                            </td>
+                            <td>
+                              {isLunch
+                                ? lunchDurationMinutes
+                                : breakDurationMinutes}{" "}
+                              dk
+                            </td>
+                          </tr>
+                        );
+                      }
+
+                      return rows;
+                    })
+                  ) : (
+                    <tr>
+                      <td colSpan={5} className="schedule-empty">
+                        Ders saatlerini oluşturmak için soldaki ayarları
+                        doldurun.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="preview-footer">
+              <span>
+                Öğle arası kapalıysa tabloda öğle arası satırı oluşturulmaz.
+              </span>
+              <button
+                type="button"
+                className="secondary"
+                onClick={regenerate}
+              >
+                ✎ Tabloyu Yenile
+              </button>
+            </div>
+
+            <div className="settings-save-bar">
+              <span>
+                {source === "e-okul"
+                  ? "e-Okul kaynaklı saatler yüklendi."
+                  : "Değişiklikleri kaydettiğinizde yoklama ekranına uygulanır."}
+              </span>
+              <button
+                type="button"
+                className="primary"
+                onClick={save}
+                disabled={saving || !lessonCount}
+              >
+                {saving ? "Kaydediliyor..." : "Okul Bilgilerini Kaydet"}
+              </button>
+            </div>
+          </section>
+        </div>
       )}
     </section>
   );
