@@ -1947,6 +1947,10 @@ function SchoolSettingsView() {
     useState<SchoolSettings["lessonTimes"]>([]);
   const [source, setSource] =
     useState<SchoolSettings["source"]>("manual");
+  const [settingsTab, setSettingsTab] =
+    useState<"general" | "lessons" | "classes" | "other">("lessons");
+  const [schoolClasses, setSchoolClasses] = useState<SchoolClass[]>([]);
+  const [classesLoading, setClassesLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -2052,6 +2056,15 @@ function SchoolSettingsView() {
     void load();
   }, [profile?.organizationId]);
 
+  useEffect(() => {
+    if (settingsTab !== "classes" || !profile?.organizationId) return;
+    setClassesLoading(true);
+    getSchoolClasses(profile.organizationId)
+      .then(setSchoolClasses)
+      .catch((err) => setError((err as Error)?.message || String(err)))
+      .finally(() => setClassesLoading(false));
+  }, [settingsTab, profile?.organizationId]);
+
   const changeCount = (value: number) => {
     const nextCount = Math.max(1, Math.min(20, value || 1));
     setLessonCount(nextCount);
@@ -2120,12 +2133,10 @@ function SchoolSettingsView() {
       </div>
 
       <div className="settings-tabs" aria-label="Okul ayarları">
-        <button type="button">Genel Bilgiler</button>
-        <button type="button" className="active">
-          <span>◷</span> Ders Saati Ayarları
-        </button>
-        <button type="button">Sınıflar</button>
-        <button type="button">⚙ Diğer Ayarlar</button>
+        <button type="button" className={settingsTab === "general" ? "active" : ""} onClick={() => setSettingsTab("general")}>Genel Bilgiler</button>
+        <button type="button" className={settingsTab === "lessons" ? "active" : ""} onClick={() => setSettingsTab("lessons")}><span>◷</span> Ders Saati Ayarları</button>
+        <button type="button" className={settingsTab === "classes" ? "active" : ""} onClick={() => setSettingsTab("classes")}>Sınıflar</button>
+        <button type="button" className={settingsTab === "other" ? "active" : ""} onClick={() => setSettingsTab("other")}>⚙ Diğer Ayarlar</button>
       </div>
 
       {loading && (
@@ -2139,7 +2150,50 @@ function SchoolSettingsView() {
         <div className="settings-message success-box">{message}</div>
       )}
 
-      {!loading && (
+      {!loading && settingsTab === "general" && (
+        <div className="settings-info-grid">
+          <section className="settings-card">
+            <div className="settings-card-header"><div className="settings-card-icon">⌂</div><div><h3>Okul ve Hesap Bilgileri</h3><p>MEVCUT'ta kullanılan kurum ve yönetici bilgileri.</p></div></div>
+            <div className="settings-detail-list">
+              <div><span>Organizasyon</span><strong>{profile?.organizationId || "—"}</strong></div>
+              <div><span>Kullanıcı</span><strong>{profile?.displayName || user?.email || "—"}</strong></div>
+              <div><span>Rol</span><strong>{profile?.role === "admin" ? "Yönetici" : profile?.role || "—"}</strong></div>
+              <div><span>Ders sayısı</span><strong>{lessonCount} ders</strong></div>
+            </div>
+          </section>
+          <section className="settings-card">
+            <div className="settings-card-header"><div className="settings-card-icon">✓</div><div><h3>Gün Sonu Akışı</h3><p>Yoklama verisinin sistemde izlediği süreç.</p></div></div>
+            <div className="settings-flow"><span>Öğretmen yoklaması</span><b>→</b><span>Gün sonu</span><b>→</b><span>Yönetici onayı</span><b>→</b><span>e-Okul</span></div>
+          </section>
+        </div>
+      )}
+
+      {!loading && settingsTab === "classes" && (
+        <section className="settings-card settings-classes-card">
+          <div className="settings-card-header"><div className="settings-card-icon">▦</div><div><h3>Sınıflar</h3><p>Sistemde tanımlı sınıf ve şubeler.</p></div><span className="preview-count">{schoolClasses.length} sınıf</span></div>
+          {classesLoading ? <div className="settings-empty">Sınıflar yükleniyor...</div> : !schoolClasses.length ? <div className="settings-empty">Henüz sınıf bulunmuyor. Entegrasyon Merkezi'nden e-Okul verilerini aktarabilirsiniz.</div> : <div className="class-settings-grid">{schoolClasses.map((item) => <div className="class-setting-item" key={item.code}><strong>{item.name}</strong><span>{item.code}</span></div>)}</div>}
+        </section>
+      )}
+
+      {!loading && settingsTab === "other" && (
+        <div className="settings-info-grid">
+          <section className="settings-card">
+            <div className="settings-card-header"><div className="settings-card-icon">⚙</div><div><h3>Sistem Ayarları</h3><p>V1'de sabit çalışan sistem davranışları.</p></div></div>
+            <div className="settings-detail-list">
+              <div><span>Gün sonu onayı</span><strong>Yönetici zorunlu</strong></div>
+              <div><span>e-Okul aktarımı</span><strong>Onay sonrası</strong></div>
+              <div><span>Öğretmen sınıf seçimi</span><strong>Manuel</strong></div>
+              <div><span>Ders programı otomasyonu</span><strong>V1'de pasif</strong></div>
+            </div>
+          </section>
+          <section className="settings-card">
+            <div className="settings-card-header"><div className="settings-card-icon">🔔</div><div><h3>Bildirimler</h3><p>Veli bildirimleri mevcut bildirim altyapısından yönetilir.</p></div></div>
+            <div className="settings-help"><strong>ℹ</strong><span>Burada henüz değiştirilebilir bir seçenek yok; sahte ayar eklemedim.</span></div>
+          </section>
+        </div>
+      )}
+
+      {!loading && settingsTab === "lessons" && (
         <div className="settings-layout">
           <section className="settings-card settings-form-card">
             <div className="settings-card-header">
