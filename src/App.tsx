@@ -252,7 +252,12 @@ function AttendanceView() {
     status: LessonAttendanceRecord["status"]
   ) => {
     const previous = records
-      .filter((item) => item.classCode === selectedClass)
+      .filter(
+        (item) =>
+          item.classCode === selectedClass &&
+          item.period > 0 &&
+          item.period < selectedPeriod
+      )
       .sort((a, b) => b.period - a.period)[0]
       ?.records.find((item) => item.studentNo === studentNo);
 
