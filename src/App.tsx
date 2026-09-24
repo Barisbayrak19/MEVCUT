@@ -909,6 +909,7 @@ function ParentView() {
   const { profile, user } = useAuth();
   const [children, setChildren] = useState<SchoolStudent[]>([]);
   const [selectedChild, setSelectedChild] = useState("");
+  const [date, setDate] = useState(todayLocal());
   const [daily, setDaily] = useState<DailyAttendanceStudent[]>([]);
   const [notifications, setNotifications] = useState<
     Awaited<ReturnType<typeof getParentNotifications>>
@@ -944,9 +945,9 @@ function ParentView() {
     getParentDailyAttendance(
       profile.organizationId,
       selectedChild,
-      todayLocal()
+      date
     ).then(setDaily).catch((err) => setError((err as Error)?.message || String(err)));
-  }, [profile?.organizationId, selectedChild]);
+  }, [profile?.organizationId, selectedChild, date]);
 
   if (loading) {
     return <section className="panel"><strong>Veli verileri yükleniyor...</strong></section>;
@@ -971,16 +972,23 @@ function ParentView() {
 
       {children.length > 0 && (
         <>
-          <select
-            value={selectedChild}
-            onChange={(e) => setSelectedChild(e.target.value)}
-          >
-            {children.map((child) => (
-              <option key={child.id} value={child.id}>
-                {child.name} · {child.className}
-              </option>
-            ))}
-          </select>
+          <div className="attendance-actions">
+            <select
+              value={selectedChild}
+              onChange={(e) => setSelectedChild(e.target.value)}
+            >
+              {children.map((child) => (
+                <option key={child.id} value={child.id}>
+                  {child.name} · {child.className}
+                </option>
+              ))}
+            </select>
+            <input
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+            />
+          </div>
 
           <div className="review-list">
             {daily.map((item) => (
