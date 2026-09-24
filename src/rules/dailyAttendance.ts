@@ -21,7 +21,7 @@ export function calculateDailyResult(
   const hasPresent = known.some((item) => item.status === "present");
   const hasLate = known.some((item) => item.status === "late");
   const hasAbsent = known.some(
-    (item) => item.status === "full_day" || item.status === "half_day"
+    (item) => item.status === "absent" || item.status === "full_day" || item.status === "half_day"
   );
   const hasUnknown = records.some((item) => item.status === "unknown");
 
@@ -52,7 +52,7 @@ export function calculateDailyResult(
   }
 
   if (!hasUnknown && known.length > 0 && known.every(
-    (item) => item.status === "full_day" || item.status === "half_day"
+    (item) => item.status === "absent" || item.status === "full_day" || item.status === "half_day"
   )) {
     return {
       result: "full_day",
@@ -86,13 +86,13 @@ export function hasIntermediateAbsence(
   for (let i = 1; i < ordered.length; i += 1) {
     if (
       ordered[i - 1].status === "present" &&
-      ordered[i].status === "full_day"
+      ordered[i].status === "absent" || ordered[i].status === "full_day"
     ) {
       return true;
     }
     if (
       ordered[i - 1].status === "present" &&
-      ordered[i].status === "half_day"
+      ordered[i].status === "absent" || ordered[i].status === "half_day"
     ) {
       return true;
     }
