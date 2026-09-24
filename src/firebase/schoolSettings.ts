@@ -25,6 +25,11 @@ export async function getSchoolSettings(
   return {
     organizationId: String(data.organizationId || organizationId),
     lessonCount: Number(data.lessonCount || lessonTimes.length || 0),
+    dayStartTime: String(data.dayStartTime || lessonTimes[0]?.startTime || "08:30"),
+    lessonDurationMinutes: Number(data.lessonDurationMinutes || 40),
+    breakDurationMinutes: Number(data.breakDurationMinutes || 10),
+    lunchDurationMinutes: Number(data.lunchDurationMinutes || 45),
+    lunchAfterPeriod: Number(data.lunchAfterPeriod || 4),
     lessonTimes,
     source: data.source === "e-okul" ? "e-okul" : "manual",
     updatedBy: data.updatedBy ? String(data.updatedBy) : undefined,
@@ -35,25 +40,32 @@ export async function getSchoolSettings(
 export async function saveSchoolSettings(args: {
   organizationId: string;
   lessonCount: number;
-  lessonTimes: SchoolSettings["lessonTimes"];
+  dayStartTime: string;
+  lessonDurationMinutes: number;
+  breakDurationMinutes: number;
+  lunchDurationMinutes: number;
+  lunchAfterPeriod: number;
+  lessonTimes?: SchoolSettings["lessonTimes"];
   updatedBy: string;
   source?: SchoolSettings["source"];
 }) {
   const lessonCount = Math.max(1, Math.min(20, Math.trunc(args.lessonCount)));
-  const lessonTimes = args.lessonTimes
-    .slice(0, lessonCount)
-    .map((item, index) => ({
-      period: index + 1,
-      startTime: item.startTime || "",
-      endTime: item.endTime || "",
-    }));
+  const lessonDurationMinutes = Math.max(1, Math.min(180, Math.trunc(args.lessonDurationMinutes)));
+  const breakDurationMinutes = Math.max(0, Math.min(120, Math.trunc(args.breakDurationMinutes)));
+  const lunchDurationMinutes = Math.max(0, Math.min(180, Math.trunc(args.lunchDurationMinutes)));
+  const lunchAfterPeriod = Math.max(0, Math.min(Math.max(lessonCount - 1, 0), Math.trunc(args.lunchAfterPeriod)));
 
   await setDoc(
     doc(db, "schoolSettings", settingsId(args.organizationId)),
     {
       organizationId: args.organizationId,
       lessonCount,
-      lessonTimes,
+      dayStartTime: args.dayStartTime || "08:30",
+      lessonDurationMinutes,
+      breakDurationMinutes,
+      lunchDurationMinutes,
+      lunchAfterPeriod,
+      lessonTimes: args.lessonTimes || [],
       source: args.source || "manual",
       updatedBy: args.updatedBy,
       updatedAt: serverTimestamp(),
