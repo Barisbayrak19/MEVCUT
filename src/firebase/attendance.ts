@@ -84,12 +84,17 @@ export async function getLessonAttendances(
       } satisfies LessonAttendance;
     })
     .filter((item) => !date || item.date === date)
-    .sort((a, b) =>
-      (a.date + "_" + a.period + "_" + a.className).localeCompare(
+    .sort((a, b) => {
+      const aTime = Number((a.updatedAt as { seconds?: number } | undefined)?.seconds || 0);
+      const bTime = Number((b.updatedAt as { seconds?: number } | undefined)?.seconds || 0);
+      if (a.period === 0 && b.period === 0 && aTime !== bTime) {
+        return aTime - bTime;
+      }
+      return (a.date + "_" + a.period + "_" + a.className).localeCompare(
         b.date + "_" + b.period + "_" + b.className,
         "tr"
-      )
-    );
+      );
+    });
 }
 
 export async function saveLessonAttendance(args: {
@@ -105,17 +110,25 @@ export async function saveLessonAttendance(args: {
   records: LessonAttendanceRecord[];
   ruleViolations?: AttendanceRuleViolation[];
 }) {
-  const id = lessonAttendanceId(
-    args.organizationId,
-    args.date,
-    args.classCode,
-    args.period,
-    args.subjectCode,
-    args.teacherUid
-  );
+  // V1 manuel yoklamasında her "Gönder" işlemi ayrı bir ham yoklama olayıdır.
+  // Bu sayede aynı sınıf için gün içinde birden fazla yoklama saklanabilir.
+  const id =
+    args.period === 0
+      ? doc(collection(db, "attendance")).id
+      : lessonAttendanceId(
+          args.organizationId,
+          args.date,
+          args.classCode,
+          args.period,
+          args.subjectCode,
+          args.teacherUid
+        );
 
-  const existing = (await getLessonAttendances(args.organizationId, args.date))
-    .find((item) => item.id === id);
+  const existing =
+    args.period === 0
+      ? undefined
+      : (await getLessonAttendances(args.organizationId, args.date))
+          .find((item) => item.id === id);
 
   if (existing?.reviewStatus === "approved") {
     throw new Error(
