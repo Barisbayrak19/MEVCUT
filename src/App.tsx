@@ -618,26 +618,30 @@ function ReviewView() {
     setError("");
 
     try {
-      const [classItems, studentItems, lessonItems, dailyItems, reportItem] =
+      const classItems = await getSchoolClasses(profile.organizationId);
+      const [studentGroups, lessonItems, dailyItems, reportItem] =
         await Promise.all([
-          getSchoolClasses(profile.organizationId),
-          getClassStudents(
-            profile.organizationId,
-            selectedClass || (await getSchoolClasses(profile.organizationId))[0]?.code || ""
-          ),
+          selectedClass
+            ? getClassStudents(profile.organizationId, selectedClass)
+            : Promise.all(
+                classItems.map((item) =>
+                  getClassStudents(profile.organizationId, item.code)
+                )
+              ).then((groups) => groups.flat()),
           getLessonAttendances(profile.organizationId, date),
-          getDailyAttendance(profile.organizationId, date, selectedClass || undefined),
+          getDailyAttendance(
+            profile.organizationId,
+            date,
+            selectedClass || undefined
+          ),
           getDailyReport(profile.organizationId, date),
         ]);
 
       setClasses(classItems);
-      const activeClass = selectedClass || classItems[0]?.code || "";
-      setSelectedClass(activeClass);
-      setStudents(
-        activeClass
-          ? await getClassStudents(profile.organizationId, activeClass)
-          : []
-      );
+      const studentItems = Array.isArray(studentGroups)
+        ? studentGroups
+        : [];
+      setStudents(studentItems);
       setLessons(lessonItems);
       setDaily(dailyItems);
       setReport(reportItem);
@@ -658,10 +662,16 @@ function ReviewView() {
     setError("");
 
     try {
-      const allStudents = await getClassStudents(
-        profile.organizationId,
-        selectedClass
-      );
+      const classItems = await getSchoolClasses(profile.organizationId);
+      const allStudents = selectedClass
+        ? await getClassStudents(profile.organizationId, selectedClass)
+        : (
+            await Promise.all(
+              classItems.map((item) =>
+                getClassStudents(profile.organizationId, item.code)
+              )
+            )
+          ).flat();
       const allLessons = await getLessonAttendances(
         profile.organizationId,
         date
@@ -752,6 +762,7 @@ function ReviewView() {
           value={selectedClass}
           onChange={(e) => setSelectedClass(e.target.value)}
         >
+          <option value="">Tüm Sınıflar</option>
           {classes.map((item) => (
             <option key={item.code} value={item.code}>{item.name}</option>
           ))}
