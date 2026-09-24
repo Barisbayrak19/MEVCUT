@@ -686,7 +686,6 @@ function ReviewView() {
   const [error, setError] = useState("");
   const [reason, setReason] = useState<Record<string, string>>({});
   const [search, setSearch] = useState("");
-  const [issueFilter, setIssueFilter] = useState<"all" | "intermediate" | "missing" | "anomaly">("all");
 
   const load = async () => {
     if (!profile?.organizationId) return;
@@ -697,19 +696,13 @@ function ReviewView() {
       const classItems = await getSchoolClasses(profile.organizationId);
       const [studentItems, lessonItems, dailyItems, reportItem, settings] =
         await Promise.all([
-          selectedClass
-            ? getClassStudents(profile.organizationId, selectedClass)
-            : Promise.all(
-                classItems.map((item) =>
-                  getClassStudents(profile.organizationId, item.code)
-                )
-              ).then((groups) => groups.flat()),
+          Promise.all(
+            classItems.map((item) =>
+              getClassStudents(profile.organizationId, item.code)
+            )
+          ).then((groups) => groups.flat()),
           getLessonAttendances(profile.organizationId, date),
-          getDailyAttendance(
-            profile.organizationId,
-            date,
-            selectedClass || undefined
-          ),
+          getDailyAttendance(profile.organizationId, date),
           getDailyReport(profile.organizationId, date),
           getSchoolSettings(profile.organizationId),
         ]);
@@ -886,43 +879,6 @@ function ReviewView() {
     (item) => item.hasIntermediateAbsence || item.systemResult === "unknown"
   ).length;
 
-  const intermediateIssues = daily.filter(
-    (item) => item.hasIntermediateAbsence
-  );
-  const anomalyIssues = daily.filter(
-    (item) => !item.hasIntermediateAbsence && item.systemResult === "unknown"
-  );
-  const missingIssues = classSummaries.filter(
-    (item) => expectedPeriods > 0 && item.submittedPeriods < expectedPeriods
-  );
-
-  const issueItems = [
-    ...intermediateIssues.map((item) => ({
-      id: "intermediate-" + item.id,
-      kind: "intermediate" as const,
-      title: item.studentName,
-      meta: item.className + " · Öğrenci No: " + item.studentNo,
-      detail: "Ara ders devamsızlığı tespit edildi.",
-      classCode: item.classCode,
-    })),
-    ...missingIssues.map((item) => ({
-      id: "missing-" + item.code,
-      kind: "missing" as const,
-      title: item.name,
-      meta: item.submittedPeriods + "/" + expectedPeriods + " ders yoklaması",
-      detail: "Eksik yoklama bulunuyor.",
-      classCode: item.code,
-    })),
-    ...anomalyIssues.map((item) => ({
-      id: "anomaly-" + item.id,
-      kind: "anomaly" as const,
-      title: item.studentName,
-      meta: item.className + " · Öğrenci No: " + item.studentNo,
-      detail: "Günlük sonuç belirlenemedi.",
-      classCode: item.classCode,
-    })),
-  ].filter((item) => issueFilter === "all" || item.kind === issueFilter);
-
   const visibleClasses = selectedClass
     ? classSummaries.filter((item) => item.code === selectedClass)
     : classSummaries;
@@ -980,17 +936,11 @@ function ReviewView() {
 
   return (
     <section className="eod-page">
-      <div className="eod-header">
-        <div>
+      <div className="eod-commandbar">
+        <div className="eod-command-copy">
           <p className="eod-eyebrow">YÖNETİCİ ÇALIŞMA ALANI</p>
-          <div className="eod-title-row">
-            <h2>Gün Sonu</h2>
-            <span className="eod-date">
-              {formatDate(date)}
-            </span>
-          </div>
           <p className="eod-subtitle">
-            Gün içindeki yoklamaları kontrol edin, sorunları temizleyin ve gün sonunu onaylayın.
+            {formatDate(date)} · Gün içindeki yoklamaları kontrol edin, gerekli düzeltmeleri yapın ve gün sonunu onaylayın.
           </p>
         </div>
 
@@ -1000,7 +950,7 @@ function ReviewView() {
             onClick={() => void load()}
             disabled={loading || busy}
           >
-            ↻ <span>Tüm Sınıfları Yenile</span>
+            ↻ <span>Yenile</span>
           </button>
           <button
             className="eod-btn blue"
@@ -1165,63 +1115,7 @@ function ReviewView() {
             )}
           </div>
         </section>
-
-        <section className="eod-card eod-issues-card">
-          <div className="eod-card-header">
-            <div>
-              <h3>İncelenmesi Gerekenler <b>{issueItems.length}</b></h3>
-              <p>Acil durumlar ve kontrol edilmesi gereken kayıtlar.</p>
-            </div>
-          </div>
-
-          <div className="eod-issue-tabs">
-            {([
-              ["all", "Tümü", intermediateIssues.length + missingIssues.length + anomalyIssues.length],
-              ["intermediate", "Ara Ders", intermediateIssues.length],
-              ["missing", "Eksik Yoklama", missingIssues.length],
-              ["anomaly", "Anomali", anomalyIssues.length],
-            ] as const).map(([key, label, count]) => (
-              <button
-                key={key}
-                className={issueFilter === key ? "active" : ""}
-                onClick={() => setIssueFilter(key)}
-              >
-                {label} ({count})
-              </button>
-            ))}
-          </div>
-
-          <div className="eod-issue-list">
-            {issueItems.slice(0, 7).map((item) => (
-              <button
-                key={item.id}
-                className={"eod-issue-item " + item.kind}
-                onClick={() => selectClass(item.classCode)}
-              >
-                <span className="eod-issue-icon">
-                  {item.kind === "intermediate" ? "◔" : item.kind === "missing" ? "!" : "?"}
-                </span>
-                <span className="eod-issue-copy">
-                  <strong>{item.title}</strong>
-                  <small>{item.meta}</small>
-                  <em>{item.detail}</em>
-                </span>
-                <span className="eod-issue-arrow">›</span>
-              </button>
-            ))}
-            {!issueItems.length && (
-              <div className="eod-no-issues">
-                <strong>✓ İncelenecek kayıt yok</strong>
-                <span>Günün tüm kayıtları şu an için temiz görünüyor.</span>
-              </div>
-            )}
-          </div>
-
-          {issueItems.length > 7 && (
-            <div className="eod-issues-more">İlk 7 kayıt gösteriliyor · toplam {issueItems.length}</div>
-          )}
-        </section>
-      </div>
+      </section>
 
       {detailClass && (
         <section className="eod-card eod-detail-card">
