@@ -168,6 +168,29 @@ export async function saveLessonAttendance(args: {
     ])
   );
 
+  batch.set(
+    doc(
+      db,
+      "attendanceLogs",
+      safeId(id + "__submitted__" + Date.now())
+    ),
+    {
+      organizationId: args.organizationId,
+      attendanceId: id,
+      date: args.date,
+      classCode: args.classCode,
+      className: args.className,
+      subjectName: args.subjectName,
+      teacherName: args.teacherName,
+      studentNo: "",
+      previousStatus: "",
+      newStatus: "submitted",
+      changedBy: args.teacherUid,
+      changedAt: serverTimestamp(),
+      action: "attendance_submitted",
+    } satisfies Omit<AttendanceAuditLog, "id">
+  );
+
   for (const record of args.records) {
     const previous = oldMap.get(record.studentNo);
 
