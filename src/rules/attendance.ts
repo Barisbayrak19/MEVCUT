@@ -27,27 +27,27 @@ export function evaluateAttendanceRules(args: {
 
     if (
       previousStatus === "present" &&
-      record.status === "full_day"
+      (record.status === "absent" || record.status === "full_day")
     ) {
       violations.push({
         ruleId: "VAR_TO_YOK",
         severity: "critical",
         studentNo: record.studentNo,
         message:
-          "Öğrenci bir önceki derste Var, bu derste Tam Gün olarak işaretlendi. Kontrol edilmesi önerilir.",
+          "Öğrenci önceki yoklamada Mevcut, sonraki yoklamada Yok olarak işaretlendi. Ara ders devamsızlığı kontrol edilmelidir.",
       });
     }
 
     if (
       previousStatus === "present" &&
-      record.status === "half_day"
+      (record.status === "absent" || record.status === "half_day")
     ) {
       violations.push({
         ruleId: "VAR_TO_YARIM",
         severity: "warning",
         studentNo: record.studentNo,
         message:
-          "Öğrenci bir önceki derste Var, bu derste Yarım Gün olarak işaretlendi.",
+          "Öğrenci önceki yoklamada Mevcut, sonraki yoklamada Yok olarak işaretlendi. Ara ders devamsızlığı kontrol edilmelidir.",
       });
     }
 
