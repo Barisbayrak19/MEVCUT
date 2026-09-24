@@ -322,6 +322,63 @@ service cloud.firestore {
     }
 
 
+    match /dailyAttendance/{dailyAttendanceId} {
+      allow get:
+        if adminSameOrg(resource.data)
+        || isParentOfStudent(resource.data.studentId);
+
+      allow list:
+        if adminSameOrg(resource.data)
+        || isParentOfStudent(resource.data.studentId);
+
+      allow create, update:
+        if adminSameOrg(request.resource.data);
+
+      allow delete:
+        if adminSameOrg(resource.data);
+    }
+
+
+    match /dailyReports/{reportId} {
+      allow read:
+        if adminSameOrg(resource.data);
+
+      allow create, update:
+        if adminSameOrg(request.resource.data);
+
+      allow delete:
+        if adminSameOrg(resource.data);
+    }
+
+
+    match /notifications/{notificationId} {
+      allow get:
+        if adminSameOrg(resource.data)
+        || (
+          isParent()
+          && resource.data.organizationId == currentUser().data.organizationId
+          && resource.data.recipientUid == request.auth.uid
+        );
+
+      allow list:
+        if adminSameOrg(resource.data)
+        || (
+          isParent()
+          && resource.data.organizationId == currentUser().data.organizationId
+          && resource.data.recipientUid == request.auth.uid
+        );
+
+      allow create:
+        if adminSameOrg(request.resource.data);
+
+      allow update:
+        if adminSameOrg(request.resource.data);
+
+      allow delete:
+        if adminSameOrg(resource.data);
+    }
+
+
     match /{document=**} {
       allow read, write: if false;
     }
