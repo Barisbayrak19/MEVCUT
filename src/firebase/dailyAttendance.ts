@@ -260,9 +260,9 @@ export async function approveDailyReport(
     );
   }
 
-  for (let i = 0; i < items.length; i += 350) {
+  for (let i = 0; i < items.length; i += 200) {
     const batch = writeBatch(db);
-    for (const item of items.slice(i, i + 350)) {
+    for (const item of items.slice(i, i + 200)) {
       batch.set(
         doc(db, "dailyAttendance", item.id),
         {
