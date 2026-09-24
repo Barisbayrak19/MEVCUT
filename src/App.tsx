@@ -44,6 +44,8 @@ import type {
   DailyAttendanceStudent,
   DailySystemResult,
 } from "./types/dailyAttendance";
+import { getSchoolSettings, saveSchoolSettings } from "./firebase/schoolSettings";
+import type { SchoolSettings } from "./types/schoolSettings";
 
 type AttendanceStatus = LessonAttendanceRecord["status"];
 import type { EOkulImportPayload } from "./types/school";
@@ -179,7 +181,7 @@ function AttendanceView() {
     setError("");
 
     try {
-      const [classItems, studentItems, attendanceItems] =
+      const [classItems, studentItems, attendanceItems, settings] =
         await Promise.all([
           getSchoolClasses(profile.organizationId),
           selectedClass
@@ -190,9 +192,14 @@ function AttendanceView() {
             date,
             profile.role === "teacher" ? user.uid : undefined
           ),
+          getSchoolSettings(profile.organizationId),
         ]);
 
       setClasses(classItems);
+      setSchoolSettings(settings);
+      if (settings?.lessonCount && selectedPeriod > settings.lessonCount) {
+        setSelectedPeriod(1);
+      }
       const activeClass = selectedClass || classItems[0]?.code || "";
       if (!selectedClass && activeClass) {
         setSelectedClass(activeClass);
@@ -210,7 +217,14 @@ function AttendanceView() {
       const classRecords = attendanceItems.filter(
         (item) => item.classCode === activeClass
       );
-      const latest = classRecords[classRecords.length - 1];
+      const selectedRecord = classRecords.find(
+        (item) => item.period === selectedPeriod
+      );
+      const latest =
+        selectedRecord ||
+        classRecords
+          .filter((item) => item.period > 0 && item.period < selectedPeriod)
+          .sort((a, b) => b.period - a.period)[0];
 
       const next: Record<string, LessonAttendanceRecord["status"]> = {};
       activeStudents.forEach((student) => {
@@ -231,7 +245,7 @@ function AttendanceView() {
 
   useEffect(() => {
     void load();
-  }, [profile?.organizationId, profile?.role, user?.uid, selectedClass, date]);
+  }, [profile?.organizationId, profile?.role, user?.uid, selectedClass, date, selectedPeriod]);
 
   const setStatus = (
     studentNo: string,
@@ -260,7 +274,12 @@ function AttendanceView() {
       classes.find((item) => item.code === selectedClass)?.name || "";
 
     const previous = records
-      .filter((item) => item.classCode === selectedClass)
+      .filter(
+        (item) =>
+          item.classCode === selectedClass &&
+          item.period > 0 &&
+          item.period < selectedPeriod
+      )
       .sort((a, b) => b.period - a.period)[0];
 
     const previousMap = new Map(
@@ -288,11 +307,11 @@ function AttendanceView() {
         date,
         classCode: selectedClass,
         className,
-        subjectCode: "manual",
-        subjectName: "Günlük Yoklama",
+        subjectCode: "period-" + selectedPeriod,
+        subjectName: selectedPeriod + ". Ders",
         teacherUid: user.uid,
         teacherName: profile.displayName,
-        period: 0,
+        period: selectedPeriod,
         records: rows,
         ruleViolations: intermediateWarnings.map((row) => ({
           ruleId: "ARA_DERS_DEVAMSIZLIGI",
@@ -335,6 +354,30 @@ function AttendanceView() {
 
         <div className="attendance-actions">
           <select
+            value={String(selectedPeriod)}
+            onChange={(e) => setSelectedPeriod(Number(e.target.value))}
+            disabled={!schoolSettings?.lessonCount}
+            aria-label="Ders saati"
+          >
+            {schoolSettings?.lessonCount ? (
+              Array.from({ length: schoolSettings.lessonCount }, (_, index) => {
+                const period = index + 1;
+                const slot = schoolSettings.lessonTimes.find((item) => item.period === period);
+                const time = slot?.startTime && slot?.endTime
+                  ? " · " + slot.startTime + "-" + slot.endTime
+                  : "";
+                return (
+                  <option key={period} value={period}>
+                    {period}. Ders{time}
+                  </option>
+                );
+              })
+            ) : (
+              <option value="">Ders saatleri tanımlı değil</option>
+            )}
+          </select>
+
+          <select
             value={selectedClass}
             onChange={(e) => setSelectedClass(e.target.value)}
             disabled={!classes.length}
@@ -354,6 +397,12 @@ function AttendanceView() {
           />
         </div>
       </div>
+
+      {!schoolSettings?.lessonCount && (
+        <div className="error-box">
+          Ders sayısı ve ders saatleri henüz tanımlı değil. Önce Ayarlar → Okul Bilgileri bölümünden ders saatlerini kaydedin.
+        </div>
+      )}
 
       <div className="info-box">
         <strong>Manuel sınıf seçimi</strong>
@@ -448,7 +497,7 @@ function AttendanceView() {
         <button
           className="primary"
           onClick={save}
-          disabled={saving || !students.length}
+          disabled={saving || !students.length || !schoolSettings?.lessonCount}
         >
           {saving ? "Gönderiliyor..." : "Yoklamayı Gönder"}
         </button>
@@ -1770,6 +1819,172 @@ function AcademicView() {
   );
 }
 
+
+function SchoolSettingsView() {
+  const { profile, user } = useAuth();
+  const [lessonCount, setLessonCount] = useState(0);
+  const [lessonTimes, setLessonTimes] = useState<SchoolSettings["lessonTimes"]>([]);
+  const [source, setSource] = useState<SchoolSettings["source"]>("manual");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  const load = async () => {
+    if (!profile?.organizationId) return;
+    setLoading(true);
+    setError("");
+    try {
+      const settings = await getSchoolSettings(profile.organizationId);
+      const count = settings?.lessonCount || 0;
+      setLessonCount(count);
+      setSource(settings?.source || "manual");
+      setLessonTimes(
+        Array.from({ length: count }, (_, index) => {
+          const period = index + 1;
+          return settings?.lessonTimes.find((item) => item.period === period) || {
+            period,
+            startTime: "",
+            endTime: "",
+          };
+        })
+      );
+    } catch (err) {
+      setError((err as Error)?.message || String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void load();
+  }, [profile?.organizationId]);
+
+  const changeCount = (value: number) => {
+    const nextCount = Math.max(1, Math.min(20, value || 1));
+    setLessonCount(nextCount);
+    setLessonTimes((current) =>
+      Array.from({ length: nextCount }, (_, index) => {
+        const period = index + 1;
+        return current.find((item) => item.period === period) || {
+          period,
+          startTime: "",
+          endTime: "",
+        };
+      })
+    );
+  };
+
+  const updateTime = (
+    period: number,
+    field: "startTime" | "endTime",
+    value: string
+  ) => {
+    setLessonTimes((current) =>
+      current.map((item) =>
+        item.period === period ? { ...item, [field]: value } : item
+      )
+    );
+  };
+
+  const save = async () => {
+    if (!profile?.organizationId || !user?.uid || !lessonCount) return;
+    setSaving(true);
+    setError("");
+    setMessage("");
+    try {
+      await saveSchoolSettings({
+        organizationId: profile.organizationId,
+        lessonCount,
+        lessonTimes,
+        updatedBy: user.uid,
+        source: "manual",
+      });
+      setSource("manual");
+      setMessage("Okul ders saatleri kaydedildi.");
+    } catch (err) {
+      setError((err as Error)?.message || String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <section className="panel">
+      <div className="panel-header">
+        <div>
+          <h3>Okul Bilgileri</h3>
+          <p>
+            Gün içindeki yoklamaların hangi ders saatine ait olduğunu burada tanımlayın.
+          </p>
+        </div>
+        <span className="status-badge">
+          {source === "e-okul" ? "e-Okul'dan alındı" : "Manuel"}
+        </span>
+      </div>
+
+      {loading && <div className="info-box"><span>Okul ayarları yükleniyor...</span></div>}
+      {error && <div className="error-box">{error}</div>}
+      {message && <div className="success-box">{message}</div>}
+
+      {!loading && (
+        <>
+          <div className="form-grid">
+            <label>
+              Ders sayısı
+              <input
+                type="number"
+                min={1}
+                max={20}
+                value={lessonCount || ""}
+                onChange={(e) => changeCount(Number(e.target.value))}
+                placeholder="Örn. 8"
+              />
+            </label>
+          </div>
+
+          <div className="history-list">
+            {lessonTimes.map((item) => (
+              <article className="history-card" key={item.period}>
+                <div>
+                  <strong>{item.period}. Ders</strong>
+                  <small>Ders başlangıç ve bitiş saati</small>
+                </div>
+                <div className="attendance-actions">
+                  <input
+                    type="time"
+                    value={item.startTime}
+                    onChange={(e) =>
+                      updateTime(item.period, "startTime", e.target.value)
+                    }
+                  />
+                  <span>—</span>
+                  <input
+                    type="time"
+                    value={item.endTime}
+                    onChange={(e) =>
+                      updateTime(item.period, "endTime", e.target.value)
+                    }
+                  />
+                </div>
+              </article>
+            ))}
+          </div>
+
+          <div className="attendance-footer">
+            <span>
+              e-Okul entegrasyonu geldiğinde bu bilgiler otomatik senkronize edilebilir.
+            </span>
+            <button className="primary" onClick={save} disabled={saving || !lessonCount}>
+              {saving ? "Kaydediliyor..." : "Okul Bilgilerini Kaydet"}
+            </button>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
 export default function App() {
   const {
     user,
@@ -1857,37 +2072,36 @@ export default function App() {
     content = <IntegrationCenterView />;
   } else if (active === "Ayarlar") {
     content = (
-      <section className="panel">
-        <div className="panel-header">
-          <div>
-            <h3>Ayarlar</h3>
-            <p>
-              Hesap ve okul ayarları.
-            </p>
+      <>
+        <SchoolSettingsView />
+        <section className="panel">
+          <div className="panel-header">
+            <div>
+              <h3>Hesap</h3>
+              <p>Oturum ve kullanıcı bilgileri.</p>
+            </div>
           </div>
-        </div>
 
-        <div className="empty-state compact">
-          <strong>
-            {profile.displayName}
-          </strong>
-          <p>
-            {profile.email} ·{" "}
-            {profile.role === "admin"
-              ? "Yönetici"
-              : profile.role === "parent"
-                ? "Veli"
-                : "Öğretmen"}
-          </p>
+          <div className="empty-state compact">
+            <strong>{profile.displayName}</strong>
+            <p>
+              {profile.email} ·{" "}
+              {profile.role === "admin"
+                ? "Yönetici"
+                : profile.role === "parent"
+                  ? "Veli"
+                  : "Öğretmen"}
+            </p>
 
-          <button
-            className="secondary"
-            onClick={() => void logout()}
-          >
-            Çıkış Yap
-          </button>
-        </div>
-      </section>
+            <button
+              className="secondary"
+              onClick={() => void logout()}
+            >
+              Çıkış Yap
+            </button>
+          </div>
+        </section>
+      </>
     );
   } else {
     content =
