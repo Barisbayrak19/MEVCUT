@@ -35,6 +35,8 @@ import {
   updateEOkulQueue,
 } from "./firebase/integration";
 import type { EOkulImportPayload } from "./types/school";
+import { getSchoolSettings, saveSchoolSettings } from "./firebase/schoolSettings";
+import type { SchoolSettings } from "./types/schoolSettings";
 
 const attendanceLabels: Record<AttendanceStatus, string> = {
   present: "Var",
@@ -1855,6 +1857,600 @@ function AcademicView() {
   );
 }
 
+function SchoolSettingsView() {
+  const { profile, user } = useAuth();
+  const [lessonCount, setLessonCount] = useState(8);
+  const [dayStartTime, setDayStartTime] = useState("08:30");
+  const [lessonDurationMinutes, setLessonDurationMinutes] = useState(40);
+  const [breakDurationMinutes, setBreakDurationMinutes] = useState(10);
+  const [lunchEnabled, setLunchEnabled] = useState(true);
+  const [lunchDurationMinutes, setLunchDurationMinutes] = useState(45);
+  const [lunchAfterPeriod, setLunchAfterPeriod] = useState(4);
+  const [lessonTimes, setLessonTimes] =
+    useState<SchoolSettings["lessonTimes"]>([]);
+  const [source, setSource] =
+    useState<SchoolSettings["source"]>("manual");
+  const [settingsTab, setSettingsTab] =
+    useState<"general" | "lessons" | "classes" | "other">("lessons");
+  const [schoolClasses, setSchoolClasses] = useState<SchoolClass[]>([]);
+  const [classesLoading, setClassesLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  const addMinutes = (time: string, minutes: number) => {
+    const [hours, mins] = time.split(":").map(Number);
+    const total = hours * 60 + mins + minutes;
+    const normalized = ((total % 1440) + 1440) % 1440;
+    return (
+      String(Math.floor(normalized / 60)).padStart(2, "0") +
+      ":" +
+      String(normalized % 60).padStart(2, "0")
+    );
+  };
+
+  const buildLessonTimes = (
+    options?: Partial<{
+      lessonCount: number;
+      dayStartTime: string;
+      lessonDurationMinutes: number;
+      breakDurationMinutes: number;
+      lunchEnabled: boolean;
+      lunchDurationMinutes: number;
+      lunchAfterPeriod: number;
+    }>
+  ): SchoolSettings["lessonTimes"] => {
+    const nextLessonCount = options?.lessonCount ?? lessonCount;
+    const nextDayStartTime = options?.dayStartTime ?? dayStartTime;
+    const nextLessonDuration = options?.lessonDurationMinutes ?? lessonDurationMinutes;
+    const nextBreakDuration = options?.breakDurationMinutes ?? breakDurationMinutes;
+    const nextLunchEnabled = options?.lunchEnabled ?? lunchEnabled;
+    const nextLunchDuration = options?.lunchDurationMinutes ?? lunchDurationMinutes;
+    const nextLunchAfterPeriod = options?.lunchAfterPeriod ?? lunchAfterPeriod;
+
+    const generated: SchoolSettings["lessonTimes"] = [];
+    let cursor = nextDayStartTime;
+
+    for (let period = 1; period <= nextLessonCount; period += 1) {
+      const startTime = cursor;
+      const endTime = addMinutes(startTime, nextLessonDuration);
+      generated.push({ period, startTime, endTime });
+
+      if (period < nextLessonCount) {
+        const pause =
+          nextLunchEnabled && period === nextLunchAfterPeriod
+            ? nextLunchDuration
+            : nextBreakDuration;
+        cursor = addMinutes(endTime, pause);
+      }
+    }
+
+    return generated;
+  };
+
+  const generateLessonTimes = () => {
+    setLessonTimes(buildLessonTimes());
+    setMessage("Ders saatleri otomatik oluşturuldu.");
+    setError("");
+  };
+
+  const load = async () => {
+    if (!profile?.organizationId) return;
+    setLoading(true);
+    setError("");
+
+    try {
+      const settings = await getSchoolSettings(profile.organizationId);
+
+      if (settings) {
+        setLessonCount(settings.lessonCount || 8);
+        setDayStartTime(
+          settings.dayStartTime ||
+            settings.lessonTimes[0]?.startTime ||
+            "08:30"
+        );
+        setLessonDurationMinutes(
+          settings.lessonDurationMinutes || 40
+        );
+        setBreakDurationMinutes(
+          settings.breakDurationMinutes ?? 10
+        );
+        setLunchEnabled(settings.lunchEnabled !== false);
+        setLunchDurationMinutes(
+          settings.lunchDurationMinutes ?? 45
+        );
+        setLunchAfterPeriod(
+          settings.lunchAfterPeriod || 4
+        );
+        setLessonTimes(settings.lessonTimes || []);
+        setSource(settings.source || "manual");
+      } else {
+        setLessonTimes([]);
+      }
+    } catch (err) {
+      setError((err as Error)?.message || String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void load();
+  }, [profile?.organizationId]);
+
+  useEffect(() => {
+    if (settingsTab !== "classes" || !profile?.organizationId) return;
+    setClassesLoading(true);
+    getSchoolClasses(profile.organizationId)
+      .then(setSchoolClasses)
+      .catch((err) => setError((err as Error)?.message || String(err)))
+      .finally(() => setClassesLoading(false));
+  }, [settingsTab, profile?.organizationId]);
+
+  const changeCount = (value: number) => {
+    const nextCount = Math.max(1, Math.min(20, value || 1));
+    setLessonCount(nextCount);
+    setLunchAfterPeriod((current) =>
+      Math.min(current, Math.max(nextCount - 1, 1))
+    );
+  };
+
+  const save = async () => {
+    if (!profile?.organizationId || !user?.uid || !lessonCount) return;
+
+    setSaving(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const timesToSave = buildLessonTimes();
+      setLessonTimes(timesToSave);
+
+      await saveSchoolSettings({
+        organizationId: profile.organizationId,
+        lessonCount,
+        dayStartTime,
+        lessonDurationMinutes,
+        breakDurationMinutes,
+        lunchEnabled,
+        lunchDurationMinutes,
+        lunchAfterPeriod: lunchEnabled ? lunchAfterPeriod : 0,
+        lessonTimes: timesToSave,
+        updatedBy: user.uid,
+        source: "manual",
+      });
+
+      setSource("manual");
+      setMessage("Okul ders saati ayarları kaydedildi.");
+      await load();
+    } catch (err) {
+      setError((err as Error)?.message || String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const regenerate = () => {
+    const times = buildLessonTimes();
+    setLessonTimes(times);
+    setMessage("Tablo yeni ayarlara göre güncellendi.");
+    setError("");
+  };
+
+  return (
+    <section className="settings-page">
+      <div className="settings-heading">
+        <div>
+          <span className="eyebrow">AYARLAR</span>
+          <h2>Okul Bilgileri</h2>
+          <p>
+            Okulunuza ait temel bilgileri ve ders saati düzenini yönetin.
+          </p>
+        </div>
+
+        <span className="settings-source">
+          <span className="settings-source-dot" />
+          {source === "e-okul" ? "e-Okul'dan alındı" : "Manuel ayar"}
+        </span>
+      </div>
+
+      <div className="settings-tabs" aria-label="Okul ayarları">
+        <button type="button" className={settingsTab === "general" ? "active" : ""} onClick={() => setSettingsTab("general")}>Genel Bilgiler</button>
+        <button type="button" className={settingsTab === "lessons" ? "active" : ""} onClick={() => setSettingsTab("lessons")}><span>◷</span> Ders Saati Ayarları</button>
+        <button type="button" className={settingsTab === "classes" ? "active" : ""} onClick={() => setSettingsTab("classes")}>Sınıflar</button>
+        <button type="button" className={settingsTab === "other" ? "active" : ""} onClick={() => setSettingsTab("other")}>⚙ Diğer Ayarlar</button>
+      </div>
+
+      {loading && (
+        <div className="settings-message info-box">
+          <span>Okul ayarları yükleniyor...</span>
+        </div>
+      )}
+
+      {error && <div className="settings-message error-box">{error}</div>}
+      {message && (
+        <div className="settings-message success-box">{message}</div>
+      )}
+
+      {!loading && settingsTab === "general" && (
+        <div className="settings-info-grid">
+          <section className="settings-card">
+            <div className="settings-card-header"><div className="settings-card-icon">⌂</div><div><h3>Okul ve Hesap Bilgileri</h3><p>MEVCUT'ta kullanılan kurum ve yönetici bilgileri.</p></div></div>
+            <div className="settings-detail-list">
+              <div><span>Organizasyon</span><strong>{profile?.organizationId || "—"}</strong></div>
+              <div><span>Kullanıcı</span><strong>{profile?.displayName || user?.email || "—"}</strong></div>
+              <div><span>Rol</span><strong>{profile?.role === "admin" ? "Yönetici" : profile?.role || "—"}</strong></div>
+              <div><span>Ders sayısı</span><strong>{lessonCount} ders</strong></div>
+            </div>
+          </section>
+          <section className="settings-card">
+            <div className="settings-card-header"><div className="settings-card-icon">✓</div><div><h3>Gün Sonu Akışı</h3><p>Yoklama verisinin sistemde izlediği süreç.</p></div></div>
+            <div className="settings-flow"><span>Öğretmen yoklaması</span><b>→</b><span>Gün sonu</span><b>→</b><span>Yönetici onayı</span><b>→</b><span>e-Okul</span></div>
+          </section>
+        </div>
+      )}
+
+      {!loading && settingsTab === "classes" && (
+        <section className="settings-card settings-classes-card">
+          <div className="settings-card-header"><div className="settings-card-icon">▦</div><div><h3>Sınıflar</h3><p>Sistemde tanımlı sınıf ve şubeler.</p></div><span className="preview-count">{schoolClasses.length} sınıf</span></div>
+          {classesLoading ? <div className="settings-empty">Sınıflar yükleniyor...</div> : !schoolClasses.length ? <div className="settings-empty">Henüz sınıf bulunmuyor. Entegrasyon Merkezi'nden e-Okul verilerini aktarabilirsiniz.</div> : <div className="class-settings-grid">{schoolClasses.map((item) => <div className="class-setting-item" key={item.code}><strong>{item.name}</strong><span>{item.code}</span></div>)}</div>}
+        </section>
+      )}
+
+      {!loading && settingsTab === "other" && (
+        <div className="settings-info-grid">
+          <section className="settings-card">
+            <div className="settings-card-header"><div className="settings-card-icon">⚙</div><div><h3>Sistem Ayarları</h3><p>V1'de sabit çalışan sistem davranışları.</p></div></div>
+            <div className="settings-detail-list">
+              <div><span>Gün sonu onayı</span><strong>Yönetici zorunlu</strong></div>
+              <div><span>e-Okul aktarımı</span><strong>Onay sonrası</strong></div>
+              <div><span>Öğretmen sınıf seçimi</span><strong>Manuel</strong></div>
+              <div><span>Ders programı otomasyonu</span><strong>V1'de pasif</strong></div>
+            </div>
+          </section>
+          <section className="settings-card">
+            <div className="settings-card-header"><div className="settings-card-icon">🔔</div><div><h3>Bildirimler</h3><p>Veli bildirimleri mevcut bildirim altyapısından yönetilir.</p></div></div>
+            <div className="settings-help"><strong>ℹ</strong><span>Burada henüz değiştirilebilir bir seçenek yok; sahte ayar eklemedim.</span></div>
+          </section>
+        </div>
+      )}
+
+      {!loading && settingsTab === "lessons" && (
+        <div className="settings-layout">
+          <section className="settings-card settings-form-card">
+            <div className="settings-card-header">
+              <div className="settings-card-icon">◷</div>
+              <div>
+                <h3>Ders Saati Ayarları</h3>
+                <p>
+                  Ders düzenini belirleyin, saat tablosu otomatik oluşsun.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="settings-eokul-button"
+                disabled
+                title="e-Okul ders saati entegrasyonu sonraki sürümde"
+              >
+                ↓ e-Okul'dan Al
+              </button>
+            </div>
+
+            <div className="settings-help">
+              <strong>ℹ Otomatik hesaplama</strong>
+              <span>
+                Bu ayarlarla okulunuzun tüm ders saatleri otomatik
+                hesaplanır. Ayarları değiştirdiğinizde tabloyu yeniden
+                oluşturabilirsiniz.
+              </span>
+            </div>
+
+            <div className="settings-form-grid">
+              <label className="settings-field">
+                <span>1. Ders Başlangıç Saati</span>
+                <div className="settings-input-wrap">
+                  <span>◷</span>
+                  <input
+                    type="time"
+                    value={dayStartTime}
+                    onChange={(e) => setDayStartTime(e.target.value)}
+                  />
+                </div>
+              </label>
+
+              <label className="settings-field">
+                <span>Ders Sayısı</span>
+                <div className="settings-input-wrap">
+                  <span>▥</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={20}
+                    value={lessonCount}
+                    onChange={(e) =>
+                      changeCount(Number(e.target.value))
+                    }
+                  />
+                </div>
+              </label>
+
+              <label className="settings-field">
+                <span>Ders Süresi <em>(dakika)</em></span>
+                <div className="settings-input-wrap">
+                  <span>◷</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={180}
+                    value={lessonDurationMinutes}
+                    onChange={(e) =>
+                      setLessonDurationMinutes(Number(e.target.value))
+                    }
+                  />
+                </div>
+              </label>
+
+              <label className="settings-field">
+                <span>Teneffüs Süresi <em>(dakika)</em></span>
+                <div className="settings-input-wrap">
+                  <span>☕</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={120}
+                    value={breakDurationMinutes}
+                    onChange={(e) =>
+                      setBreakDurationMinutes(Number(e.target.value))
+                    }
+                  />
+                </div>
+              </label>
+            </div>
+
+            <div
+              className={
+                lunchEnabled
+                  ? "lunch-settings enabled"
+                  : "lunch-settings"
+              }
+            >
+              <div className="lunch-header">
+                <div>
+                  <strong>Öğle Arası</strong>
+                  <span>Öğle arası uygulanacak mı?</span>
+                </div>
+
+                <label className="switch">
+                  <input
+                    type="checkbox"
+                    checked={lunchEnabled}
+                    onChange={(e) => setLunchEnabled(e.target.checked)}
+                  />
+                  <span className="switch-track" />
+                  <b>{lunchEnabled ? "Uygulanacak" : "Yok"}</b>
+                </label>
+              </div>
+
+              {lunchEnabled ? (
+                <div className="lunch-grid">
+                  <label className="settings-field">
+                    <span>Öğle Arası Hangi Dersten Sonra?</span>
+                    <div className="settings-input-wrap">
+                      <span>▥</span>
+                      <select
+                        value={lunchAfterPeriod}
+                        onChange={(e) =>
+                          setLunchAfterPeriod(Number(e.target.value))
+                        }
+                      >
+                        {Array.from(
+                          { length: Math.max(lessonCount - 1, 1) },
+                          (_, index) => index + 1
+                        ).map((period) => (
+                          <option key={period} value={period}>
+                            {period}. dersten sonra
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </label>
+
+                  <label className="settings-field">
+                    <span>Öğle Arası Süresi <em>(dakika)</em></span>
+                    <div className="settings-input-wrap">
+                      <span>🍴</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={180}
+                        value={lunchDurationMinutes}
+                        onChange={(e) =>
+                          setLunchDurationMinutes(Number(e.target.value))
+                        }
+                      />
+                    </div>
+                  </label>
+                </div>
+              ) : (
+                <div className="lunch-disabled-note">
+                  Öğle arası kapalı. Tüm ders aralarında yalnızca teneffüs
+                  süresi kullanılacak.
+                </div>
+              )}
+            </div>
+
+            <div className="settings-actions">
+              <button
+                type="button"
+                className="secondary settings-reset"
+                onClick={() => {
+                  setDayStartTime("08:30");
+                  setLessonCount(8);
+                  setLessonDurationMinutes(40);
+                  setBreakDurationMinutes(10);
+                  setLunchEnabled(true);
+                  setLunchDurationMinutes(45);
+                  setLunchAfterPeriod(4);
+                  setLessonTimes(
+                    buildLessonTimes({
+                      dayStartTime: "08:30",
+                      lessonCount: 8,
+                      lessonDurationMinutes: 40,
+                      breakDurationMinutes: 10,
+                      lunchEnabled: true,
+                      lunchDurationMinutes: 45,
+                      lunchAfterPeriod: 4,
+                    })
+                  );
+                  setMessage("Varsayılan değerler yüklendi.");
+                }}
+              >
+                ↻ Varsayılanları Yükle
+              </button>
+
+              <button
+                type="button"
+                className="primary settings-generate"
+                onClick={regenerate}
+              >
+                ▣ Ders Saatlerini Oluştur
+              </button>
+            </div>
+          </section>
+
+          <section className="settings-card settings-preview-card">
+            <div className="settings-card-header preview-header">
+              <div className="settings-card-icon">▣</div>
+              <div>
+                <h3>Oluşacak Ders Programı</h3>
+                <p>
+                  Ayarlarınıza göre hesaplanan ders ve teneffüs saatleri.
+                </p>
+              </div>
+              <span className="preview-count">
+                {lessonCount} Ders
+                {lunchEnabled ? " · 1 Öğle Arası" : ""}
+              </span>
+            </div>
+
+            <div className="schedule-table-wrap">
+              <table className="schedule-table">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Tür</th>
+                    <th>Başlangıç</th>
+                    <th>Bitiş</th>
+                    <th>Süre</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lessonTimes.length ? (
+                    lessonTimes.flatMap((item) => {
+                      const rows = [
+                        <tr key={"lesson-" + item.period}>
+                          <td>{item.period}</td>
+                          <td>
+                            <span className="schedule-type lesson">
+                              ▫ {item.period}. Ders
+                            </span>
+                          </td>
+                          <td>{item.startTime}</td>
+                          <td>{item.endTime}</td>
+                          <td>{lessonDurationMinutes} dk</td>
+                        </tr>,
+                      ];
+
+                      if (item.period < lessonCount) {
+                        const isLunch =
+                          lunchEnabled &&
+                          item.period === lunchAfterPeriod;
+                        rows.push(
+                          <tr
+                            key={"pause-" + item.period}
+                            className={isLunch ? "lunch-row" : ""}
+                          >
+                            <td>—</td>
+                            <td>
+                              <span
+                                className={
+                                  isLunch
+                                    ? "schedule-type lunch"
+                                    : "schedule-type break"
+                                }
+                              >
+                                {isLunch ? "🍴 Öğle Arası" : "☕ Teneffüs"}
+                              </span>
+                            </td>
+                            <td>{item.endTime}</td>
+                            <td>
+                              {addMinutes(
+                                item.endTime,
+                                isLunch
+                                  ? lunchDurationMinutes
+                                  : breakDurationMinutes
+                              )}
+                            </td>
+                            <td>
+                              {isLunch
+                                ? lunchDurationMinutes
+                                : breakDurationMinutes}{" "}
+                              dk
+                            </td>
+                          </tr>
+                        );
+                      }
+
+                      return rows;
+                    })
+                  ) : (
+                    <tr>
+                      <td colSpan={5} className="schedule-empty">
+                        Ders saatlerini oluşturmak için soldaki ayarları
+                        doldurun.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="preview-footer">
+              <span>
+                Öğle arası kapalıysa tabloda öğle arası satırı oluşturulmaz.
+              </span>
+              <button
+                type="button"
+                className="secondary"
+                onClick={regenerate}
+              >
+                ✎ Tabloyu Yenile
+              </button>
+            </div>
+
+            <div className="settings-save-bar">
+              <span>
+                {source === "e-okul"
+                  ? "e-Okul kaynaklı saatler yüklendi."
+                  : "Değişiklikleri kaydettiğinizde yoklama ekranına uygulanır."}
+              </span>
+              <button
+                type="button"
+                className="primary"
+                onClick={save}
+                disabled={saving || !lessonCount}
+              >
+                {saving ? "Kaydediliyor..." : "Okul Bilgilerini Kaydet"}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+    </section>
+  );
+}
+
 export default function App() {
   const {
     user,
@@ -1939,35 +2535,34 @@ export default function App() {
     content = <IntegrationCenterView />;
   } else if (active === "Ayarlar") {
     content = (
-      <section className="panel">
-        <div className="panel-header">
-          <div>
-            <h3>Ayarlar</h3>
-            <p>
-              Hesap ve okul ayarları.
-            </p>
+      <>
+        {profile.role === "admin" && <SchoolSettingsView />}
+        <section className="panel">
+          <div className="panel-header">
+            <div>
+              <h3>Hesap</h3>
+              <p>Oturum ve kullanıcı bilgileri.</p>
+            </div>
           </div>
-        </div>
 
-        <div className="empty-state compact">
-          <strong>
-            {profile.displayName}
-          </strong>
-          <p>
-            {profile.email} ·{" "}
-            {profile.role === "admin"
-              ? "Yönetici"
-              : "Öğretmen"}
-          </p>
+          <div className="empty-state compact">
+            <strong>{profile.displayName}</strong>
+            <p>
+              {profile.email} ·{" "}
+              {profile.role === "admin"
+                ? "Yönetici"
+                : "Öğretmen"}
+            </p>
 
-          <button
-            className="secondary"
-            onClick={() => void logout()}
-          >
-            Çıkış Yap
-          </button>
-        </div>
-      </section>
+            <button
+              className="secondary"
+              onClick={() => void logout()}
+            >
+              Çıkış Yap
+            </button>
+          </div>
+        </section>
+      </>
     );
   } else {
     content = (
