@@ -677,12 +677,15 @@ function ReviewView() {
   const [lessons, setLessons] = useState<LessonAttendance[]>([]);
   const [daily, setDaily] = useState<DailyAttendanceStudent[]>([]);
   const [selectedClass, setSelectedClass] = useState("");
+  const [detailClass, setDetailClass] = useState("");
   const [date, setDate] = useState(todayLocal());
   const [report, setReport] = useState<Awaited<ReturnType<typeof getDailyReport>>>(null);
+  const [schoolSettings, setSchoolSettings] = useState<SchoolSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [reason, setReason] = useState<Record<string, string>>({});
+  const [search, setSearch] = useState("");
 
   const load = async () => {
     if (!profile?.organizationId) return;
@@ -691,32 +694,25 @@ function ReviewView() {
 
     try {
       const classItems = await getSchoolClasses(profile.organizationId);
-      const [studentGroups, lessonItems, dailyItems, reportItem] =
+      const [studentItems, lessonItems, dailyItems, reportItem, settings] =
         await Promise.all([
-          selectedClass
-            ? getClassStudents(profile.organizationId, selectedClass)
-            : Promise.all(
-                classItems.map((item) =>
-                  getClassStudents(profile.organizationId, item.code)
-                )
-              ).then((groups) => groups.flat()),
+          Promise.all(
+            classItems.map((item) =>
+              getClassStudents(profile.organizationId, item.code)
+            )
+          ).then((groups) => groups.flat()),
           getLessonAttendances(profile.organizationId, date),
-          getDailyAttendance(
-            profile.organizationId,
-            date,
-            selectedClass || undefined
-          ),
+          getDailyAttendance(profile.organizationId, date),
           getDailyReport(profile.organizationId, date),
+          getSchoolSettings(profile.organizationId),
         ]);
 
       setClasses(classItems);
-      const studentItems = Array.isArray(studentGroups)
-        ? studentGroups
-        : [];
-      setStudents(studentItems);
+      setStudents(Array.isArray(studentItems) ? studentItems : []);
       setLessons(lessonItems);
       setDaily(dailyItems);
       setReport(reportItem);
+      setSchoolSettings(settings);
     } catch (err) {
       setError((err as Error)?.message || String(err));
     } finally {
@@ -735,15 +731,11 @@ function ReviewView() {
 
     try {
       const classItems = await getSchoolClasses(profile.organizationId);
-      const allStudents = selectedClass
-        ? await getClassStudents(profile.organizationId, selectedClass)
-        : (
-            await Promise.all(
-              classItems.map((item) =>
-                getClassStudents(profile.organizationId, item.code)
-              )
-            )
-          ).flat();
+      const allStudents = await Promise.all(
+        classItems.map((item) =>
+          getClassStudents(profile.organizationId, item.code)
+        )
+      ).then((groups) => groups.flat());
       const allLessons = await getLessonAttendances(
         profile.organizationId,
         date
@@ -793,9 +785,11 @@ function ReviewView() {
 
   const approve = async () => {
     if (!profile?.organizationId || !user?.uid) return;
-    if (!window.confirm(
-      "Gün sonu raporu onaylanacak, kilitlenecek ve onaylanan sonuçlar e-Okul aktarım kuyruğuna alınacak. Devam edilsin mi?"
-    )) return;
+    if (
+      !window.confirm(
+        "Gün sonu raporu onaylanacak, kilitlenecek ve onaylanan sonuçlar e-Okul aktarım kuyruğuna alınacak. Devam edilsin mi?"
+      )
+    ) return;
 
     setBusy(true);
     setError("");
@@ -810,29 +804,109 @@ function ReviewView() {
     }
   };
 
-  const visibleDaily = daily.filter(
-    (item) => !selectedClass || item.classCode === selectedClass
+  const expectedPeriods =
+    schoolSettings?.lessonCount ||
+    lessons.reduce((max, lesson) => Math.max(max, lesson.period || 0), 0);
+
+  const classSummaries = useMemo(() => {
+    return classes
+      .map((item) => {
+        const classStudents = students.filter(
+          (student) => student.classCode === item.code
+        );
+        const classLessons = lessons.filter(
+          (lesson) => lesson.classCode === item.code
+        );
+        const submittedPeriods = new Set(
+          classLessons.map((lesson) => lesson.period).filter(Boolean)
+        ).size;
+        const classDaily = daily.filter(
+          (student) => student.classCode === item.code
+        );
+        const problemCount =
+          classDaily.filter(
+            (student) =>
+              student.hasIntermediateAbsence ||
+              student.systemResult === "unknown"
+          ).length +
+          (expectedPeriods > 0
+            ? Math.max(expectedPeriods - submittedPeriods, 0)
+            : 0);
+
+        let state: "ready" | "missing" | "review" | "empty" = "ready";
+        if (submittedPeriods === 0) state = "empty";
+        else if (problemCount > 0 && classDaily.some((student) => student.hasIntermediateAbsence)) {
+          state = "review";
+        } else if (submittedPeriods < expectedPeriods) {
+          state = "missing";
+        } else if (problemCount > 0) {
+          state = "review";
+        }
+
+        return {
+          ...item,
+          studentCount: classStudents.length,
+          submittedPeriods,
+          problemCount,
+          state,
+        };
+      })
+      .filter((item) =>
+        normalize(item.name).includes(normalize(search))
+      );
+  }, [classes, students, lessons, daily, expectedPeriods, search]);
+
+  const totalExpected = classes.length * expectedPeriods;
+  const submittedPairs = classes.reduce((sum, item) => {
+    const periods = new Set(
+      lessons
+        .filter((lesson) => lesson.classCode === item.code)
+        .map((lesson) => lesson.period)
+        .filter(Boolean)
+    ).size;
+    return sum + Math.min(periods, expectedPeriods);
+  }, 0);
+  const completionPercent =
+    totalExpected > 0
+      ? Math.round((submittedPairs / totalExpected) * 100)
+      : 0;
+
+  const presentCount = daily.filter((item) => item.finalResult === "present").length;
+  const halfDayCount = daily.filter((item) => item.finalResult === "half_day").length;
+  const fullDayCount = daily.filter((item) => item.finalResult === "full_day").length;
+  const lateCount = daily.filter((item) => item.finalResult === "late").length;
+  const reviewCount = daily.filter(
+    (item) => item.hasIntermediateAbsence || item.systemResult === "unknown"
+  ).length;
+
+  const visibleClasses = selectedClass
+    ? classSummaries.filter((item) => item.code === selectedClass)
+    : classSummaries;
+
+  const detailStudents = students.filter(
+    (student) => student.classCode === detailClass
   );
-
-  const periods = Array.from(
-    new Set(lessons.map((lesson) => lesson.period).filter(Boolean))
+  const detailLessons = lessons
+    .filter((lesson) => lesson.classCode === detailClass)
+    .sort((a, b) => a.period - b.period);
+  const detailDaily = daily.filter(
+    (item) => item.classCode === detailClass
+  );
+  const detailPeriods = Array.from(
+    new Set(detailLessons.map((lesson) => lesson.period).filter(Boolean))
   ).sort((a, b) => a - b);
-
-  const lessonByKey = new Map(
-    lessons.map((lesson) => [
-      lesson.classCode + "__" + lesson.period,
-      lesson,
-    ])
+  const detailLessonByPeriod = new Map(
+    detailLessons.map((lesson) => [lesson.period, lesson])
   );
 
   const statusShort = (status?: LessonAttendanceRecord["status"]) =>
     ({
-      present: "V",
-      absent: "Y",
-      full_day: "T",
+      present: "Var",
+      absent: "Yok",
+      full_day: "Tam",
       half_day: "½",
-      late: "G",
-      unknown: "?",
+      late: "Geç",
+      unknown: "—",
     }[status || "unknown"]);
 
   const statusTitle = (status?: LessonAttendanceRecord["status"]) =>
@@ -846,219 +920,339 @@ function ReviewView() {
     }[status || "unknown"]);
 
   const getStudentLessonStatus = (
-    item: DailyAttendanceStudent,
+    studentNo: string,
     period: number
   ) => {
-    const lesson = lessonByKey.get(item.classCode + "__" + period);
+    const lesson = detailLessonByPeriod.get(period);
     return lesson?.records.find(
-      (record) => record.studentNo === item.studentNo
+      (record) => record.studentNo === studentNo
     )?.status;
   };
 
+  const selectClass = (code: string) => {
+    setSelectedClass(code);
+    setDetailClass(code);
+  };
+
   return (
-    <section className="panel review-panel">
-      <div className="panel-header">
-        <div>
-          <h3>Gün Sonu Yönetim Merkezi</h3>
-          <p>
-            Sınıf, öğrenci ve ders bazındaki tüm yoklama sonuçlarını tek tabloda
-            karşılaştırın ve gün sonu kararını verin.
+    <section className="eod-page">
+      <div className="eod-commandbar">
+        <div className="eod-command-copy">
+          <p className="eod-eyebrow">YÖNETİCİ ÇALIŞMA ALANI</p>
+          <p className="eod-subtitle">
+            {formatDate(date)} · Gün içindeki yoklamaları kontrol edin, gerekli düzeltmeleri yapın ve gün sonunu onaylayın.
           </p>
         </div>
-        <span className="status-badge">
-          {report?.locked
-            ? "KİLİTLİ"
-            : report?.status === "approved"
-            ? "ONAYLI"
-            : "TASLAK"}
-        </span>
-      </div>
 
-      <div className="attendance-actions">
-        <select
-          value={selectedClass}
-          onChange={(e) => setSelectedClass(e.target.value)}
-        >
-          <option value="">Tüm Sınıflar</option>
-          {classes.map((item) => (
-            <option key={item.code} value={item.code}>
-              {item.name}
-            </option>
-          ))}
-        </select>
-        <input
-          type="date"
-          value={date}
-          onChange={(e) => setDate(e.target.value)}
-        />
-        <button className="secondary" onClick={calculate} disabled={busy}>
-          {busy ? "Hesaplanıyor..." : "Gün Sonunu Hesapla"}
-        </button>
-        <button
-          className="primary"
-          onClick={approve}
-          disabled={busy || !daily.length || Boolean(report?.locked)}
-        >
-          Gün Sonunu Onayla ve Kilitle
-        </button>
-      </div>
-
-      {error && <div className="error-box attendance-error">{error}</div>}
-
-      {!loading && !visibleDaily.length && (
-        <div className="empty-state compact">
-          <strong>Henüz günlük sonuç oluşturulmadı.</strong>
-          <p>
-            Önce öğretmen yoklamalarının gelmesini bekleyin ve “Gün Sonunu
-            Hesapla” düğmesine basın.
-          </p>
+        <div className="eod-header-actions">
+          <button
+            className="eod-btn ghost"
+            onClick={() => void load()}
+            disabled={loading || busy}
+          >
+            ↻ <span>Yenile</span>
+          </button>
+          <button
+            className="eod-btn blue"
+            onClick={() => void calculate()}
+            disabled={busy}
+          >
+            {busy ? "Hesaplanıyor..." : "⚙ Gün Sonunu Oluştur / Güncelle"}
+          </button>
+          <button
+            className="eod-btn green"
+            onClick={() => void approve()}
+            disabled={busy || !daily.length || Boolean(report?.locked)}
+          >
+            ✓ Onayla ve e-Okula Aktar
+          </button>
         </div>
-      )}
+      </div>
 
-      {visibleDaily.length > 0 && (
-        <div className="review-table-wrap">
-          <table className="review-table">
-            <thead>
-              <tr>
-                <th className="class-col">Sınıf</th>
-                <th className="student-col">Öğrenci</th>
-                {periods.map((period) => {
-                  const lesson = selectedClass
-                    ? lessonByKey.get(selectedClass + "__" + period)
-                    : lessons.find((item) => item.period === period);
+      <div className="eod-datebar">
+        <label>
+          <span>Tarih</span>
+          <input
+            type="date"
+            value={date}
+            onChange={(e) => setDate(e.target.value)}
+          />
+        </label>
+        <label>
+          <span>Sınıf</span>
+          <select
+            value={selectedClass}
+            onChange={(e) => {
+              setSelectedClass(e.target.value);
+              setDetailClass(e.target.value);
+            }}
+          >
+            <option value="">Tüm Sınıflar</option>
+            {classes.map((item) => (
+              <option key={item.code} value={item.code}>
+                {item.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="eod-lock-state">
+          <span className={report?.locked ? "dot locked" : "dot"} />
+          {report?.locked ? "Gün sonu kilitli" : report?.status === "approved" ? "Onaylı" : "Taslak / İnceleme"}
+        </div>
+      </div>
 
-                  return (
-                    <th key={period} className="period-col">
-                      <span>{period}. Ders</span>
-                      <small>
-                        {lesson?.subjectName || "Ders bilgisi bekleniyor"}
-                      </small>
-                    </th>
-                  );
-                })}
-                <th className="result-col">Sistem</th>
-                <th className="result-col">Nihai</th>
-                <th className="action-col">İşlem</th>
-              </tr>
-            </thead>
-            <tbody>
-              {visibleDaily.map((item) => (
-                <tr key={item.id}>
-                  <td className="class-cell">{item.className}</td>
-                  <td className="student-cell">
-                    <strong>{item.studentName}</strong>
-                    <small>No: {item.studentNo}</small>
-                    {item.hasIntermediateAbsence && (
-                      <em>🚨 Ara ders</em>
-                    )}
-                  </td>
+      {error && <div className="error-box eod-error">{error}</div>}
 
-                  {periods.map((period) => {
-                    const status = getStudentLessonStatus(item, period);
+      <div className="eod-kpis">
+        <div className="eod-kpi blue">
+          <div className="eod-kpi-icon">▦</div>
+          <div><strong>{classes.length}</strong><span>Toplam Sınıf</span><small>{classSummaries.filter((item) => item.state !== "empty").length} işlendi</small></div>
+          <div className="eod-progress"><i style={{ width: (classes.length ? Math.round((classSummaries.filter((item) => item.state !== "empty").length / classes.length) * 100) : 0) + "%" }} /></div>
+        </div>
+        <div className="eod-kpi teal">
+          <div className="eod-kpi-icon">●</div>
+          <div><strong>{students.length}</strong><span>Toplam Öğrenci</span><small>{presentCount} mevcut</small></div>
+          <div className="eod-progress"><i style={{ width: (students.length ? Math.min(100, Math.round((presentCount / students.length) * 100)) : 0) + "%" }} /></div>
+        </div>
+        <div className="eod-kpi indigo">
+          <div className="eod-kpi-icon">◷</div>
+          <div><strong>%{completionPercent}</strong><span>Yoklama Tamamlanma</span><small>{submittedPairs} / {totalExpected || "—"} ders</small></div>
+          <div className="eod-progress"><i style={{ width: completionPercent + "%" }} /></div>
+        </div>
+        <div className="eod-mini-kpi green"><strong>{presentCount}</strong><span>Mevcut</span></div>
+        <div className="eod-mini-kpi amber"><strong>{halfDayCount}</strong><span>Yarım Gün</span></div>
+        <div className="eod-mini-kpi red"><strong>{fullDayCount}</strong><span>Tam Gün</span></div>
+        <div className="eod-mini-kpi purple"><strong>{lateCount}</strong><span>Geç</span></div>
+        <div className="eod-mini-kpi gray"><strong>{reviewCount}</strong><span>İncelenecek</span></div>
+      </div>
+
+      <section className="eod-card eod-classes-card">
+          <div className="eod-card-header">
+            <div>
+              <h3>Sınıflar</h3>
+              <p>Bir sınıfa tıklayın; o sınıftaki öğrencilerin ders ders yoklama durumunu açın.</p>
+            </div>
+            <div className="eod-legend">
+              <span><i className="ready" /> Hazır</span>
+              <span><i className="missing" /> Eksik</span>
+              <span><i className="review" /> İnceleme</span>
+              <span><i className="empty" /> Başlanmadı</span>
+            </div>
+          </div>
+
+          <div className="eod-class-tools">
+            <div className="eod-search">
+              <span>⌕</span>
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Sınıf ara..."
+              />
+            </div>
+            <select
+              value={selectedClass}
+              onChange={(e) => selectClass(e.target.value)}
+            >
+              <option value="">Tümü</option>
+              {classes.map((item) => (
+                <option key={item.code} value={item.code}>{item.name}</option>
+              ))}
+            </select>
+            {selectedClass && (
+              <button
+                className="eod-btn ghost small"
+                onClick={() => { setSelectedClass(""); setDetailClass(""); }}
+              >
+                Tüm sınıfları göster
+              </button>
+            )}
+          </div>
+
+          <div className="eod-class-list">
+            <div className="eod-class-list-head">
+              <span>Sınıf</span>
+              <span>Öğrenci</span>
+              <span>Yoklama</span>
+              <span>Sorun</span>
+              <span>Durum</span>
+              <span></span>
+            </div>
+
+            {visibleClasses.map((item) => (
+              <button
+                key={item.code}
+                className={"eod-class-row " + item.state + (detailClass === item.code ? " selected" : "")}
+                onClick={() => selectClass(item.code)}
+              >
+                <span className="eod-class-name">
+                  <strong>{item.name}</strong>
+                </span>
+                <span>{item.studentCount}</span>
+                <span>
+                  <b>{item.submittedPeriods}</b> / {expectedPeriods || "—"} ders
+                </span>
+                <span className={item.problemCount ? "problem-count" : "zero-count"}>
+                  {item.problemCount || 0}
+                </span>
+                <span>
+                  <em className={"eod-state " + item.state}>
+                    {item.state === "ready"
+                      ? "✓ Hazır"
+                      : item.state === "missing"
+                        ? "● Eksik"
+                        : item.state === "review"
+                          ? "! İncele"
+                          : "○ Başlanmadı"}
+                  </em>
+                </span>
+                <span className="eod-class-arrow">›</span>
+              </button>
+            ))}
+
+            {!visibleClasses.length && !loading && (
+              <div className="eod-empty-inline">Aramanızla eşleşen sınıf bulunamadı.</div>
+            )}
+          </div>
+        </section>
+
+      {detailClass && (
+        <section className="eod-card eod-detail-card">
+          <div className="eod-detail-header">
+            <div>
+              <p className="eod-eyebrow">SINIF DETAYI</p>
+              <h3>
+                {classes.find((item) => item.code === detailClass)?.name || detailClass}
+              </h3>
+              <p>{detailStudents.length} öğrenci · {detailLessons.length ? detailPeriods.length + " ders yoklaması" : "Henüz ders yoklaması yok"}</p>
+            </div>
+            <div className="eod-detail-actions">
+              <button className="eod-btn ghost small" onClick={() => { setSelectedClass(""); setDetailClass(""); }}>← Sınıflara Dön</button>
+              <button className="eod-btn blue small" onClick={() => void calculate()} disabled={busy}>Gün Sonunu Güncelle</button>
+            </div>
+          </div>
+
+          {detailStudents.length > 0 ? (
+            <div className="eod-detail-table-wrap">
+              <table className="eod-detail-table">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Öğrenci</th>
+                    {detailPeriods.map((period) => {
+                      const lesson = detailLessonByPeriod.get(period);
+                      return (
+                        <th key={period}>
+                          <span>{period}. Ders</span>
+                          <small>{lesson?.subjectName || "Ders"}</small>
+                        </th>
+                      );
+                    })}
+                    <th>Sistem</th>
+                    <th>Nihai</th>
+                    <th>İşlem</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {detailStudents.map((student, index) => {
+                    const item = detailDaily.find(
+                      (dailyItem) => dailyItem.studentNo === student.studentNo
+                    );
                     return (
-                      <td key={period} className="period-cell">
-                        <span
-                          className={"attendance-dot status-" + (status || "unknown")}
-                          title={statusTitle(status)}
-                        >
-                          {statusShort(status)}
-                        </span>
-                        {!status && <small>—</small>}
-                      </td>
+                      <tr key={student.id}>
+                        <td className="eod-index">{index + 1}</td>
+                        <td className="eod-student">
+                          <strong>{student.name}</strong>
+                          <small>{student.studentNo}</small>
+                          {item?.hasIntermediateAbsence && <em>🚨 Ara ders</em>}
+                        </td>
+                        {detailPeriods.map((period) => {
+                          const status = getStudentLessonStatus(student.studentNo, period);
+                          return (
+                            <td key={period} className="eod-status-cell">
+                              <span className={"eod-status-pill status-" + (status || "unknown")} title={statusTitle(status)}>
+                                {statusShort(status)}
+                              </span>
+                            </td>
+                          );
+                        })}
+                        <td>
+                          <span className="eod-result system">{item ? dailyResultLabel(item.systemResult) : "—"}</span>
+                        </td>
+                        <td>
+                          <span className="eod-result final">{item ? dailyResultLabel(item.finalResult) : "—"}</span>
+                        </td>
+                        <td>
+                          {!report?.locked && item ? (
+                            <div className="eod-row-actions">
+                              <input
+                                value={reason[item.id] || ""}
+                                onChange={(e) =>
+                                  setReason((current) => ({
+                                    ...current,
+                                    [item.id]: e.target.value,
+                                  }))
+                                }
+                                placeholder="Gerekçe"
+                              />
+                              <div>
+                                <button className="present" onClick={() => void override(item, "present")} disabled={busy}>Var</button>
+                                <button className="absent" onClick={() => void override(item, "full_day")} disabled={busy}>Yok</button>
+                                <button className="late" onClick={() => void override(item, "late")} disabled={busy}>Geç</button>
+                              </div>
+                            </div>
+                          ) : (
+                            <span className="eod-locked">🔒 Kilitli</span>
+                          )}
+                        </td>
+                      </tr>
                     );
                   })}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="eod-detail-empty">
+              Bu sınıf için öğrenci verisi bulunamadı.
+            </div>
+          )}
 
-                  <td>
-                    <span className="table-result">
-                      {dailyResultLabel(item.systemResult)}
-                    </span>
-                  </td>
-                  <td>
-                    <span className="table-result final">
-                      {dailyResultLabel(item.finalResult)}
-                    </span>
-                  </td>
-                  <td>
-                    {!report?.locked ? (
-                      <div className="table-actions">
-                        <input
-                          placeholder="Gerekçe"
-                          value={reason[item.id] || ""}
-                          onChange={(e) =>
-                            setReason((current) => ({
-                              ...current,
-                              [item.id]: e.target.value,
-                            }))
-                          }
-                        />
-                        <div>
-                          <button
-                            className="secondary"
-                            disabled={busy}
-                            onClick={() => void override(item, "present")}
-                          >
-                            Var
-                          </button>
-                          <button
-                            className="secondary"
-                            disabled={busy}
-                            onClick={() => void override(item, "half_day")}
-                          >
-                            Yarım
-                          </button>
-                          <button
-                            className="secondary"
-                            disabled={busy}
-                            onClick={() => void override(item, "full_day")}
-                          >
-                            Tam
-                          </button>
-                          <button
-                            className="secondary"
-                            disabled={busy}
-                            onClick={() => void override(item, "late")}
-                          >
-                            Geç
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <span className="locked-cell">🔒 Kilitli</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="eod-detail-legend">
+            <span><b className="status-present">Var</b></span>
+            <span><b className="status-absent">Yok</b></span>
+            <span><b className="status-late">Geç</b></span>
+            <span><b className="status-unknown">—</b> Bilgi yok</span>
+            <span>🚨 Ara ders devamsızlığı</span>
+          </div>
+        </section>
+      )}
+
+      {!detailClass && !loading && (
+        <div className="eod-bottom-note">
+          <span>
+            {classes.length} sınıf · {students.length} öğrenci · {lessons.length} ders yoklaması
+          </span>
+          <span>
+            {report?.locked ? "🔒 Gün sonu kilitli" : "Kontrol bittikten sonra gün sonunu onaylayıp e-Okul aktarımını başlatabilirsiniz."}
+          </span>
         </div>
       )}
 
-      {visibleDaily.length > 0 && (
-        <div className="review-legend">
-          <span><b>V</b> Var</span>
-          <span><b>Y</b> Yok</span>
-          <span><b>G</b> Geç</span>
-          <span><b>?</b> Bilinmiyor</span>
-          <span><b>½</b> Yarım Gün</span>
-          <span className="legend-alert">🚨 Ara ders devamsızlığı</span>
+      {detailClass && (
+        <div className="eod-approval-bar">
+          <div>
+            <strong>{report?.locked ? "Gün sonu kilitli" : "Son kontrol tamamlandı mı?"}</strong>
+            <span>Onay, nihai sonuçları kilitler ve onaylanan kayıtları e-Okul aktarım kuyruğuna gönderir.</span>
+          </div>
+          <button
+            className="eod-btn green"
+            onClick={() => void approve()}
+            disabled={busy || !daily.length || Boolean(report?.locked)}
+          >
+            ✓ Onayla ve e-Okula Aktar
+          </button>
         </div>
       )}
-
-      <div className="review-footer">
-        <span>
-          {visibleDaily.length} öğrenci · {periods.length} ders sütunu ·{" "}
-          {lessons.length} öğretmen yoklaması
-        </span>
-        <button
-          className="primary"
-          onClick={approve}
-          disabled={busy || !daily.length || Boolean(report?.locked)}
-        >
-          Gün Sonunu Onayla ve Kilitle
-        </button>
-      </div>
     </section>
-
   );
 }
 
